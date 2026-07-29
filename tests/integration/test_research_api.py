@@ -219,6 +219,7 @@ class _FakeSheetsExporter(ResultExporter):
 
     def __init__(self) -> None:
         self.context: ExportContext | None = None
+        self.requested_spreadsheet_id: str | None = None
 
     async def export(
         self,
@@ -241,10 +242,17 @@ def _client(
     exporter: _FakeSheetsExporter | None = None,
     settings: Settings | None = None,
 ) -> TestClient:
+    def exporter_factory(
+        spreadsheet_id: str | None,
+    ) -> ResultExporter:
+        assert exporter is not None
+        exporter.requested_spreadsheet_id = spreadsheet_id
+        return exporter
+
     service = ResearchRunApplicationService(
         workflow=workflow,
         google_sheets_exporter_factory=(
-            (lambda: exporter) if exporter is not None else None
+            exporter_factory if exporter is not None else None
         ),
         settings=settings or Settings(_env_file=None),
     )
@@ -281,6 +289,10 @@ def test_run_polling_paginated_results_and_skipped_sources() -> None:
         terminal = _wait_for_terminal(client, run_id)
         assert terminal["status"] == "completed"
         assert terminal["partial_result_count"] == 3
+        assert terminal["discovered_candidate_count"] == 3
+        assert terminal["approved_candidate_count"] == 3
+        assert terminal["skipped_source_count"] == 1
+        assert terminal["completed_result_count"] == 3
 
         results = client.get(
             f"/api/research-runs/{run_id}/results",
@@ -323,13 +335,17 @@ def test_google_sheets_export_uses_terminal_run_context() -> None:
         run_id = client.post("/api/research-runs", json=REQUEST_BODY).json()["id"]
         _wait_for_terminal(client, run_id)
 
-        response = client.post(f"/api/research-runs/{run_id}/export/google-sheets")
+        response = client.post(
+            f"/api/research-runs/{run_id}/export/google-sheets",
+            json={"spreadsheet_id": "portfolio-sheet-123"},
+        )
         assert response.status_code == 200
         assert response.json()["artifact"]["record_count"] == 3
         assert response.json()["artifact"]["format_name"] == "google_sheets"
         assert exporter.context is not None
         assert exporter.context.generated_queries
         assert exporter.context.skipped_sources
+        assert exporter.requested_spreadsheet_id == "portfolio-sheet-123"
 
 
 def test_structured_errors_request_ids_and_export_conflict() -> None:

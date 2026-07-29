@@ -91,6 +91,23 @@ After a run reaches a terminal state,
 `POST /api/research-runs/{run_id}/export/google-sheets` exports its final or
 partial records using the configured Google Sheets service account.
 
+## Streamlit dashboard
+
+The Streamlit portfolio interface is an API client; it does not load or retain
+provider credentials. Set `UI_API_BASE_URL` when FastAPI is not available at
+`http://localhost:8000`, then run `make run-ui`.
+
+The prepopulated Shopify-agency demo includes topic, count, country and language
+hints, output-field selection, strict compliance mode, and an optional Google
+Sheet ID. During a run, the dashboard polls progress and displays discovered,
+approved, skipped, and completed counts. Terminal and partial results support a
+relevance threshold, safe CSV download, Google Sheets export, skipped-source
+audit details, and validation warnings.
+
+The demo requires strict compliance mode. Blocked or ambiguous websites are
+skipped; these automated controls are operational risk signals and do not
+provide legal advice.
+
 ## Source policies
 
 Source decisions are configured in `config/approved_domains.yaml`,

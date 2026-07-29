@@ -102,6 +102,10 @@ class ResearchRunResponse(ApiModel):
                     "completed_items": 8,
                     "total_items": 30,
                     "partial_result_count": 0,
+                    "discovered_candidate_count": 24,
+                    "approved_candidate_count": 8,
+                    "skipped_source_count": 16,
+                    "completed_result_count": 0,
                     "warnings": [],
                     "error_message": None,
                     "created_at": "2026-07-29T10:00:00Z",
@@ -118,6 +122,10 @@ class ResearchRunResponse(ApiModel):
     completed_items: int = Field(default=0, ge=0)
     total_items: int = Field(ge=1, le=100)
     partial_result_count: int = Field(default=0, ge=0)
+    discovered_candidate_count: int = Field(default=0, ge=0)
+    approved_candidate_count: int = Field(default=0, ge=0)
+    skipped_source_count: int = Field(default=0, ge=0)
+    completed_result_count: int = Field(default=0, ge=0)
     warnings: list[str] = Field(default_factory=list)
     error_message: str | None = None
     created_at: datetime
@@ -178,6 +186,24 @@ class GoogleSheetsExportResponse(ApiModel):
 
     run_id: UUID
     artifact: ExportArtifact
+
+
+class GoogleSheetsExportRequest(ApiModel):
+    """Optional existing spreadsheet selected by the dashboard user."""
+
+    spreadsheet_id: str | None = Field(
+        default=None,
+        pattern=r"^[A-Za-z0-9_-]+$",
+        max_length=256,
+    )
+
+    @field_validator("spreadsheet_id", mode="before")
+    @classmethod
+    def blank_spreadsheet_id_is_unset(cls, value: object) -> object:
+        """Use server configuration when the input is blank."""
+        if isinstance(value, str) and not value.strip():
+            return None
+        return value.strip() if isinstance(value, str) else value
 
 
 class ProviderStatus(ApiModel):

@@ -36,6 +36,7 @@ def test_settings_load_from_environment(monkeypatch: pytest.MonkeyPatch) -> None
     monkeypatch.setenv("GOOGLE_SHEETS_SPREADSHEET_ID", "sheet-id")
     monkeypatch.setenv("GOOGLE_SHEETS_CREATE_ALLOWED", "true")
     monkeypatch.setenv("GOOGLE_SHEETS_MAX_RETRIES", "4")
+    monkeypatch.setenv("UI_API_BASE_URL", "http://api.internal:8080")
 
     settings = Settings()
 
@@ -70,6 +71,7 @@ def test_settings_load_from_environment(monkeypatch: pytest.MonkeyPatch) -> None
     assert settings.google_sheets_spreadsheet_id == "sheet-id"
     assert settings.google_sheets_create_allowed is True
     assert settings.google_sheets_max_retries == 4
+    assert settings.ui_api_base_url == "http://api.internal:8080"
 
 
 def test_blank_optional_google_settings_are_unset(

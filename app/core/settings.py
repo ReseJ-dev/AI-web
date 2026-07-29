@@ -299,6 +299,12 @@ class Settings(BaseSettings):
         le=30,
         validation_alias="GOOGLE_SHEETS_BACKOFF_SECONDS",
     )
+    ui_api_base_url: str = Field(
+        default="http://localhost:8000",
+        min_length=1,
+        max_length=2_048,
+        validation_alias="UI_API_BASE_URL",
+    )
 
     @field_validator(
         "google_service_account_file",

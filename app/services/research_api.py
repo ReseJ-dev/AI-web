@@ -94,7 +94,7 @@ class _RunState:
     warnings: list[str] = field(default_factory=list)
 
 
-ExporterFactory = Callable[[], ResultExporter]
+ExporterFactory = Callable[[str | None], ResultExporter]
 
 
 class ResearchRunApplicationService:
@@ -222,6 +222,8 @@ class ResearchRunApplicationService:
     async def export_google_sheets(
         self,
         run_id: UUID,
+        *,
+        spreadsheet_id: str | None = None,
     ) -> GoogleSheetsExportResponse:
         """Export a terminal run without exposing Google credentials."""
         state = self._get_state(run_id)
@@ -235,7 +237,7 @@ class ResearchRunApplicationService:
                 "Google Sheets export is not configured."
             )
         try:
-            exporter = self._google_sheets_exporter_factory()
+            exporter = self._google_sheets_exporter_factory(spreadsheet_id)
         except GoogleSheetsExporterError as error:
             raise ResearchProviderUnavailableError(
                 "Google Sheets export could not be initialized."
@@ -440,6 +442,12 @@ class ResearchRunApplicationService:
     def _run_response(self, state: _RunState) -> ResearchRunResponse:
         progress = state.latest_progress
         records = state.result.records if state.result is not None else []
+        skipped_sources = (
+            state.result.skipped_sources if state.result is not None else []
+        )
+        discovered = (
+            state.result.candidates_discovered if state.result is not None else 0
+        )
         return ResearchRunResponse(
             id=state.run.id,
             status=state.run.status,
@@ -448,6 +456,10 @@ class ResearchRunApplicationService:
             completed_items=progress.completed_items or 0 if progress else 0,
             total_items=state.run.request.result_count,
             partial_result_count=len(records),
+            discovered_candidate_count=discovered,
+            approved_candidate_count=len(records),
+            skipped_source_count=len(skipped_sources),
+            completed_result_count=len(records),
             warnings=[self._safe_text(warning) for warning in state.warnings],
             error_message=(
                 "The research workflow failed."

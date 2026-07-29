@@ -8,6 +8,7 @@ from fastapi import APIRouter, Depends, Query, Request, status
 from app.api.schemas import (
     ApiErrorResponse,
     CreateResearchRunRequest,
+    GoogleSheetsExportRequest,
     GoogleSheetsExportResponse,
     ProvidersResponse,
     ResearchResultsResponse,
@@ -119,9 +120,13 @@ async def get_skipped_sources(
 async def export_google_sheets(
     run_id: UUID,
     service: ResearchService,
+    payload: GoogleSheetsExportRequest | None = None,
 ) -> GoogleSheetsExportResponse:
     """Export a terminal run using the configured Google Sheets exporter."""
-    return await service.export_google_sheets(run_id)
+    return await service.export_google_sheets(
+        run_id,
+        spreadsheet_id=payload.spreadsheet_id if payload is not None else None,
+    )
 
 
 @router.get(

@@ -65,7 +65,7 @@ def _enrichment_providers(settings: Settings) -> list[CompanyEnrichmentProvider]
 
 def _google_exporter_factory(
     settings: Settings,
-) -> Callable[[], ResultExporter] | None:
+) -> Callable[[str | None], ResultExporter] | None:
     credentials = bool(settings.google_service_account_file) or _secret_present(
         settings.google_service_account_json
     )
@@ -74,7 +74,11 @@ def _google_exporter_factory(
     )
     if not credentials or not target:
         return None
-    return GoogleSheetsExporter
+
+    def build(spreadsheet_id: str | None) -> ResultExporter:
+        return GoogleSheetsExporter(spreadsheet_id=spreadsheet_id)
+
+    return build
 
 
 def build_research_service() -> ResearchRunApplicationService:
