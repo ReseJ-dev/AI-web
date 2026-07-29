@@ -5,6 +5,7 @@ import json
 from collections import defaultdict
 from collections.abc import Awaitable, Callable, Mapping, Sequence
 from typing import Protocol
+from uuid import UUID, uuid4
 
 from pydantic import JsonValue
 
@@ -185,10 +186,12 @@ class ResearchOrchestrator:
         country_tld: str | None = None,
         export_formats: Sequence[str] = (),
         on_progress: ProgressCallback | None = None,
+        run_id: UUID | None = None,
     ) -> ResearchOrchestrationResult:
         """Execute the workflow and return final or partially successful records."""
         validated_request = ResearchRequest.model_validate(request)
         run = ResearchRun(
+            id=run_id or uuid4(),
             request=validated_request,
             status=ResearchRunStatus.RUNNING,
         )
@@ -462,6 +465,27 @@ class ResearchOrchestrator:
                 search_requests_used=search_requests_used,
                 candidates_discovered=candidates_discovered,
             )
+
+    async def aclose(self) -> None:
+        """Close owned or injected provider resources once each."""
+        seen: set[int] = set()
+        resources = (
+            self._search_provider,
+            self._compliance_preflight,
+            self._crawler,
+            self._structured_extractor,
+            *self._enrichment_providers,
+            *self._exporters.values(),
+        )
+        for resource in resources:
+            if id(resource) in seen:
+                continue
+            seen.add(id(resource))
+            close = getattr(resource, "aclose", None)
+            if callable(close):
+                outcome = close()
+                if inspect.isawaitable(outcome):
+                    await outcome
 
     async def _process_candidate(
         self,

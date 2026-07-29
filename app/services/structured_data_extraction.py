@@ -1,6 +1,7 @@
 """Evidence-based deterministic, LLM, and composite company extraction."""
 
 import asyncio
+import inspect
 import json
 import re
 from collections.abc import Awaitable, Callable, Iterable, Sequence
@@ -1271,6 +1272,14 @@ class LLMCompanyExtractor:
         if not 1_000 <= self._max_input_chars <= 200_000:
             raise ValueError("max_input_chars must be between 1000 and 200000")
 
+    async def aclose(self) -> None:
+        """Close an underlying HTTP-backed LLM provider when supported."""
+        close = getattr(self._provider, "aclose", None)
+        if callable(close):
+            outcome = close()
+            if inspect.isawaitable(outcome):
+                await outcome
+
     def _bounded_pages(
         self,
         pages: Sequence[ExtractedPageContent],
@@ -1419,6 +1428,19 @@ class CompositeCompanyExtractor:
     ) -> None:
         self._deterministic = deterministic
         self._llm = llm
+
+    async def aclose(self) -> None:
+        """Close unique structured extractor resources when supported."""
+        seen: set[int] = set()
+        for extractor in (self._deterministic, self._llm):
+            if id(extractor) in seen:
+                continue
+            seen.add(id(extractor))
+            close = getattr(extractor, "aclose", None)
+            if callable(close):
+                outcome = close()
+                if inspect.isawaitable(outcome):
+                    await outcome
 
     async def extract(
         self,

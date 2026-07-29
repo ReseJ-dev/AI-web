@@ -6,10 +6,18 @@ from app.repositories.interfaces import (
     ResearchRunRepository,
     SkippedSourceRepository,
 )
+from app.repositories.sqlalchemy import (
+    SqlAlchemyCompanyRecordRepository,
+    SqlAlchemyResearchRunRepository,
+    SqlAlchemySkippedSourceRepository,
+)
 
 __all__ = [
     "CompanyRecordRepository",
     "ComplianceDecisionRepository",
     "ResearchRunRepository",
     "SkippedSourceRepository",
+    "SqlAlchemyCompanyRecordRepository",
+    "SqlAlchemyResearchRunRepository",
+    "SqlAlchemySkippedSourceRepository",
 ]

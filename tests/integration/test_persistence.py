@@ -2,14 +2,16 @@
 
 from datetime import UTC
 
-from sqlalchemy.orm import Session
+from sqlalchemy.orm import Session, sessionmaker
 
 from app.core.database import create_database_engine
 from app.models import (
+    CompanyRecord,
     ComplianceStatus,
     RequestedField,
     ResearchRequest,
     ResearchRun,
+    SkippedSource,
 )
 from app.models.persistence import (
     Base,
@@ -17,6 +19,11 @@ from app.models.persistence import (
     ComplianceDecisionRow,
     ResearchRunRow,
     SkippedSourceRow,
+)
+from app.repositories import (
+    SqlAlchemyCompanyRecordRepository,
+    SqlAlchemyResearchRunRepository,
+    SqlAlchemySkippedSourceRepository,
 )
 
 
@@ -80,3 +87,39 @@ def test_sqlite_persists_structured_research_data() -> None:
         ]
         assert session.query(ComplianceDecisionRow).one().relevance == {"total": 0.9}
         assert session.query(SkippedSourceRow).count() == 1
+
+
+def test_sqlalchemy_repositories_round_trip_domain_models() -> None:
+    """Concrete API repositories preserve UUIDs, UTC data, and structured fields."""
+    engine = create_database_engine("sqlite+pysqlite:///:memory:")
+    Base.metadata.create_all(engine)
+    sessions = sessionmaker(bind=engine, expire_on_commit=False)
+    runs = SqlAlchemyResearchRunRepository(sessions)
+    companies = SqlAlchemyCompanyRecordRepository(sessions)
+    skipped = SqlAlchemySkippedSourceRepository(sessions)
+    run = ResearchRun(
+        request=ResearchRequest(
+            query="Shopify agencies",
+            requested_fields=[RequestedField(name="country")],
+        )
+    )
+    company = CompanyRecord(
+        research_run_id=run.id,
+        name="Example Commerce",
+        website_url="https://example.com/",
+        services=["Shopify development"],
+    )
+    source = SkippedSource(
+        research_run_id=run.id,
+        url="https://blocked.example/",
+        reason="Blocked by source policy.",
+    )
+
+    runs.add(run)
+    companies.add(company)
+    skipped.add(source)
+
+    assert runs.get(run.id) == run
+    assert companies.get(company.id) == company
+    assert companies.list_for_run(run.id) == [company]
+    assert skipped.list_for_run(run.id) == [source]

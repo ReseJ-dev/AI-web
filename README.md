@@ -36,6 +36,9 @@ make run-api
 ```
 
 The health endpoint is available at `http://localhost:8000/health`.
+The versioned health endpoint is available at
+`http://localhost:8000/api/health`, and interactive OpenAPI documentation is
+available at `http://localhost:8000/docs`.
 
 Start the Streamlit UI in another terminal:
 
@@ -48,6 +51,45 @@ Apply database migrations:
 ```bash
 make migrate
 ```
+
+## Research API
+
+Research runs are asynchronous. `POST /api/research-runs` validates the topic,
+requested fields, result count, and locale, returns `202 Accepted`, and provides
+a UUID for progress polling through `GET /api/research-runs/{run_id}`.
+Verified results and skipped-source audit records are available from the
+run-specific `/results` and `/skipped-sources` endpoints. Results support
+`offset` and `limit` pagination and remain available when a run finishes with
+partial success.
+
+```bash
+curl -X POST http://localhost:8000/api/research-runs \
+  -H 'Content-Type: application/json' \
+  -H 'X-Request-ID: portfolio-demo-1' \
+  -d '{
+    "topic": "Shopify agencies in the Netherlands",
+    "requested_fields": [
+      {"name": "country"},
+      {"name": "services"},
+      {"name": "contact page"}
+    ],
+    "result_count": 30,
+    "location": "Netherlands",
+    "country": "NL",
+    "language": "en",
+    "country_tld": "nl"
+  }'
+```
+
+Every response includes `X-Request-ID`; a safe caller-provided value is
+preserved. Validation, missing-run, lifecycle-conflict, provider, and internal
+failures use a consistent `error` envelope. Error responses and
+`GET /api/config/providers` expose provider readiness but never credential
+values.
+
+After a run reaches a terminal state,
+`POST /api/research-runs/{run_id}/export/google-sheets` exports its final or
+partial records using the configured Google Sheets service account.
 
 ## Source policies
 
