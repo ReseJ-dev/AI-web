@@ -43,6 +43,12 @@ Start the Streamlit UI in another terminal:
 make run-ui
 ```
 
+Apply database migrations:
+
+```bash
+make migrate
+```
+
 ## Quality checks
 
 ```bash
