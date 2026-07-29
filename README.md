@@ -102,10 +102,16 @@ routes, strictly filters other domains, and preserves the priority order from
 homepage through topic-specific service pages.
 
 `HtmlContentExtractor` processes supplied HTML locally; it performs no network
-requests. It preserves canonical, meta, Open Graph, and Organization JSON-LD
-metadata while removing executable, hidden, cookie, navigation, menu, and
-footer content. Clean visible text is deduplicated and limited by
-`HTML_CONTENT_MAX_CHARS` before it can be passed to an LLM provider.
+requests. BeautifulSoup preserves canonical, meta, Open Graph, and Organization
+JSON-LD metadata while removing executable, hidden, cookie, navigation, menu,
+and footer content. Semantic DOM blocks are deduplicated; body-only layouts use
+trafilatura as a precision-oriented main-content fallback.
+
+Every retained text block records its source URL and semantic kind. English and
+Dutch service-related sections group their own source-attributed blocks, while
+contact links remain structured candidates. Clean visible text and service
+content are limited by `HTML_CONTENT_MAX_CHARS` before any text can be passed to
+an LLM provider.
 
 ## Structured company extraction
 

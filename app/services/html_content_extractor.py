@@ -7,9 +7,16 @@ from urllib.parse import urljoin, urlsplit, urlunsplit
 
 from bs4 import BeautifulSoup, Tag
 from pydantic import JsonValue, TypeAdapter, ValidationError
+from trafilatura import extract as extract_main_text
 
 from app.core.settings import get_settings
-from app.models import ExtractedPageContent, NavigationLink
+from app.models import (
+    ExtractedPageContent,
+    ExtractedTextBlock,
+    NavigationLink,
+    ServiceSection,
+    TextBlockKind,
+)
 
 _JSON_VALUE_ADAPTER: TypeAdapter[JsonValue] = TypeAdapter(JsonValue)
 _WHITESPACE = re.compile(r"\s+")
@@ -65,6 +72,26 @@ _TEXT_BLOCK_TAGS = (
     "blockquote",
     "address",
 )
+_SERVICE_MARKERS = (
+    "capabilities",
+    "diensten",
+    "expertise",
+    "oplossingen",
+    "our services",
+    "service",
+    "services",
+    "solutions",
+    "specialismen",
+    "what we do",
+)
+_BLOCK_KINDS = {
+    "address": TextBlockKind.ADDRESS,
+    "blockquote": TextBlockKind.QUOTE,
+    "dd": TextBlockKind.LIST_ITEM,
+    "dt": TextBlockKind.LIST_ITEM,
+    "li": TextBlockKind.LIST_ITEM,
+    "p": TextBlockKind.PARAGRAPH,
+}
 
 
 def _compact(value: str) -> str:
@@ -294,9 +321,19 @@ def _remove_noise(soup: BeautifulSoup) -> None:
     _remove_tags(hidden)
 
 
-def _deduplicated_text(root: Tag | BeautifulSoup) -> str:
-    """Extract semantic text blocks while removing exact repeated chrome."""
-    lines: list[str] = []
+def _block_kind(tag_name: str) -> TextBlockKind:
+    """Map a semantic HTML element to a stable text-block kind."""
+    if re.fullmatch(r"h[1-6]", tag_name):
+        return TextBlockKind.HEADING
+    return _BLOCK_KINDS.get(tag_name, TextBlockKind.OTHER)
+
+
+def _text_blocks(
+    root: Tag | BeautifulSoup,
+    source_url: str,
+) -> list[ExtractedTextBlock]:
+    """Extract deduplicated semantic blocks with source attribution."""
+    blocks: list[ExtractedTextBlock] = []
     seen: set[str] = set()
     visible_blocks = (*_TEXT_BLOCK_TAGS, "div", "section")
     for block in root.find_all(visible_blocks):
@@ -307,10 +344,60 @@ def _deduplicated_text(root: Tag | BeautifulSoup) -> str:
         if not text or fingerprint in seen:
             continue
         seen.add(fingerprint)
-        lines.append(text)
-    if lines:
-        return "\n".join(lines)
-    return _compact(root.get_text(" ", strip=True))
+        blocks.append(
+            ExtractedTextBlock(
+                source_url=source_url,
+                text=text,
+                kind=_block_kind(block.name),
+            )
+        )
+    if blocks:
+        return blocks
+    fallback = _compact(root.get_text(" ", strip=True))
+    return (
+        [
+            ExtractedTextBlock(
+                source_url=source_url,
+                text=fallback,
+                kind=TextBlockKind.OTHER,
+            )
+        ]
+        if fallback
+        else []
+    )
+
+
+def _trafilatura_blocks(
+    html: str,
+    source_url: str,
+) -> list[ExtractedTextBlock]:
+    """Extract precision-oriented fallback blocks from pages without main markup."""
+    extracted = extract_main_text(
+        html,
+        url=source_url,
+        output_format="txt",
+        include_comments=False,
+        include_tables=False,
+        favor_precision=True,
+    )
+    if not extracted:
+        return []
+    blocks: list[ExtractedTextBlock] = []
+    seen: set[str] = set()
+    for line in extracted.splitlines():
+        text = _compact(line)
+        fingerprint = text.casefold()
+        if not text or fingerprint in seen:
+            continue
+        seen.add(fingerprint)
+        blocks.append(
+            ExtractedTextBlock(
+                source_url=source_url,
+                text=text,
+                kind=TextBlockKind.OTHER,
+            )
+        )
+    return blocks
 
 
 def _truncate_text(text: str, limit: int) -> tuple[str, bool]:
@@ -322,6 +409,96 @@ def _truncate_text(text: str, limit: int) -> tuple[str, bool]:
     if boundary >= int(limit * 0.8):
         candidate = candidate[:boundary]
     return candidate.rstrip(), True
+
+
+def _bounded_text_blocks(
+    blocks: Iterable[ExtractedTextBlock],
+    limit: int,
+) -> tuple[list[ExtractedTextBlock], bool]:
+    """Bound a block sequence and partially retain the final fitting block."""
+    source_blocks = list(blocks)
+    bounded: list[ExtractedTextBlock] = []
+    used = 0
+    truncated = False
+    for index, block in enumerate(source_blocks):
+        separator_size = 1 if bounded else 0
+        remaining = limit - used - separator_size
+        if remaining <= 0:
+            truncated = True
+            break
+        text, block_truncated = _truncate_text(block.text, remaining)
+        if text:
+            bounded.append(block.model_copy(update={"text": text}))
+            used += separator_size + len(text)
+        if block_truncated:
+            truncated = True
+            break
+        if index < len(source_blocks) - 1 and used >= limit:
+            truncated = True
+            break
+    return bounded, truncated
+
+
+def _service_sections(
+    root: Tag | BeautifulSoup,
+    source_url: str,
+    *,
+    text_budget: int,
+) -> list[ServiceSection]:
+    """Extract bounded English and Dutch service-related content sections."""
+    sections: list[ServiceSection] = []
+    selected_containers: list[Tag] = []
+    seen: set[str] = set()
+    seen_blocks: set[str] = set()
+    remaining_budget = text_budget
+    for container in root.find_all(["section", "article", "div"]):
+        if any(
+            parent is selected
+            for parent in container.parents
+            for selected in selected_containers
+        ):
+            continue
+        heading_tag = container.find(re.compile(r"^h[1-6]$"))
+        heading = (
+            _compact(heading_tag.get_text(" ", strip=True))
+            if isinstance(heading_tag, Tag)
+            else ""
+        )
+        signal_text = f"{heading} {_tag_tokens(container)}".casefold().replace(
+            "-",
+            " ",
+        )
+        if not any(marker in signal_text for marker in _SERVICE_MARKERS):
+            continue
+        blocks = [
+            block
+            for block in _text_blocks(container, source_url)
+            if block.text.casefold() not in seen_blocks
+        ]
+        if not blocks or remaining_budget <= 0:
+            continue
+        bounded, _ = _bounded_text_blocks(blocks, remaining_budget)
+        if not bounded:
+            continue
+        fingerprint = "\n".join(block.text.casefold() for block in bounded)
+        if fingerprint in seen:
+            continue
+        seen.add(fingerprint)
+        seen_blocks.update(block.text.casefold() for block in bounded)
+        selected_containers.append(container)
+        section_heading = heading or "Services"
+        sections.append(
+            ServiceSection(
+                source_url=source_url,
+                heading=section_heading,
+                text_blocks=bounded,
+            )
+        )
+        remaining_budget -= sum(len(block.text) for block in bounded)
+        remaining_budget -= max(0, len(bounded) - 1)
+        if len(sections) >= 20 or remaining_budget <= 0:
+            break
+    return sections
 
 
 class HtmlContentExtractor:
@@ -353,16 +530,25 @@ class HtmlContentExtractor:
         contact_candidates = [link for link in all_links if _is_contact_link(link)]
 
         _remove_noise(soup)
-        main: Tag | BeautifulSoup = soup
-        for candidate in (
-            soup.find("main"),
-            soup.find("article"),
-            soup.find(attrs={"role": "main"}),
-            soup.body,
-        ):
-            if isinstance(candidate, Tag):
-                main = candidate
-                break
+        main: Tag | BeautifulSoup
+        semantic_main = next(
+            (
+                candidate
+                for candidate in (
+                    soup.find("main"),
+                    soup.find("article"),
+                    soup.find(attrs={"role": "main"}),
+                )
+                if isinstance(candidate, Tag)
+            ),
+            None,
+        )
+        if semantic_main is not None:
+            main = semantic_main
+        elif isinstance(soup.body, Tag):
+            main = soup.body
+        else:
+            main = soup
         headings = []
         seen_headings: set[str] = set()
         for heading in main.find_all(re.compile(r"^h[1-6]$")):
@@ -372,10 +558,21 @@ class HtmlContentExtractor:
                 seen_headings.add(fingerprint)
                 headings.append(text)
 
-        full_text = _deduplicated_text(main)
-        bounded_text, truncated = _truncate_text(
-            full_text,
+        structural_blocks = _text_blocks(main, source_url)
+        if semantic_main is None:
+            precision_blocks = _trafilatura_blocks(str(soup), source_url)
+            unbounded_blocks = precision_blocks or structural_blocks
+        else:
+            unbounded_blocks = structural_blocks
+        bounded_blocks, truncated = _bounded_text_blocks(
+            unbounded_blocks,
             self._max_text_chars,
+        )
+        bounded_text = "\n".join(block.text for block in bounded_blocks)
+        service_sections = _service_sections(
+            main,
+            source_url,
+            text_budget=self._max_text_chars,
         )
         return ExtractedPageContent(
             source_url=source_url,
@@ -385,8 +582,10 @@ class HtmlContentExtractor:
             open_graph=open_graph,
             organization_data=organization_data,
             main_text=bounded_text,
+            text_blocks=bounded_blocks,
             headings=headings,
             navigation_links=navigation_links,
+            service_sections=service_sections,
             contact_page_candidates=contact_candidates,
             source_html_length=len(html),
             extracted_text_length=len(bounded_text),

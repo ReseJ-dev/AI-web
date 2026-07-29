@@ -9,10 +9,13 @@ from app.models.compliance import (
 )
 from app.models.content import (
     ExtractedPageContent,
+    ExtractedTextBlock,
     NavigationLink,
     PageCandidate,
     PageCategory,
     RankedPage,
+    ServiceSection,
+    TextBlockKind,
 )
 from app.models.domain import (
     CompanyRecord,
@@ -80,6 +83,7 @@ __all__ = [
     "ExportArtifact",
     "ExtractedField",
     "ExtractedPageContent",
+    "ExtractedTextBlock",
     "ExtractionStatus",
     "FactBasis",
     "LLMCompanyResponse",
@@ -109,8 +113,10 @@ __all__ = [
     "ScorePenalty",
     "SearchCandidate",
     "SearchParameters",
+    "ServiceSection",
     "SkippedSource",
     "SupportedField",
     "TermsLink",
     "TermsPolicyResult",
+    "TextBlockKind",
 ]
