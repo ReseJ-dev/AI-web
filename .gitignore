@@ -17,6 +17,7 @@ build/
 
 # Local configuration and data
 .env
+.env.docker
 data/
 *.db
 *.sqlite3

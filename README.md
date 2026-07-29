@@ -52,6 +52,57 @@ Apply database migrations:
 make migrate
 ```
 
+## Docker development environment
+
+Docker Compose runs PostgreSQL, FastAPI, and Streamlit together. Copy the
+ignored environment file and set the four blank Docker database variables:
+
+```bash
+cp .env.example .env
+```
+
+Choose local values for `POSTGRES_DB`, `POSTGRES_USER`, and
+`POSTGRES_PASSWORD`. Set `COMPOSE_DATABASE_URL` to the matching SQLAlchemy URL:
+
+```text
+postgresql+psycopg://<url-encoded-user>:<url-encoded-password>@postgres:5432/<database>
+```
+
+The values belong only in the git-ignored `.env` file or your runtime secret
+store; do not add them to an image or commit them. Provider credentials can
+also be supplied through the same local environment file and are passed only
+to the API service. Streamlit receives only its API URL and non-secret runtime
+settings.
+
+Build and start the development stack:
+
+```bash
+make docker-up
+```
+
+FastAPI applies Alembic migrations after PostgreSQL becomes healthy, then
+starts with reload enabled. Streamlit waits for the API health check. The
+services are available at:
+
+- FastAPI: `http://localhost:8000`
+- OpenAPI: `http://localhost:8000/docs`
+- Streamlit: `http://localhost:8501`
+
+Override host ports with `API_PORT` and `STREAMLIT_PORT`. Source directories
+are bind-mounted for development reloads, while PostgreSQL data is retained in
+the `postgres-data` named volume.
+
+Useful development commands:
+
+```bash
+make docker-ps
+make docker-logs
+make docker-down
+```
+
+`docker compose down` preserves database data. To intentionally remove the
+local database volume, use `docker compose down --volumes`.
+
 ## Research API
 
 Research runs are asynchronous. `POST /api/research-runs` validates the topic,

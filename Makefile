@@ -1,4 +1,4 @@
-.PHONY: install run-api run-ui migrate migration format lint typecheck test test-live check
+.PHONY: install run-api run-ui migrate migration docker-up docker-down docker-logs docker-ps format lint typecheck test test-live check
 
 install:
 	python -m pip install -e ".[dev]"
@@ -14,6 +14,18 @@ migrate:
 
 migration:
 	alembic revision --autogenerate -m "$(message)"
+
+docker-up:
+	docker compose up --build
+
+docker-down:
+	docker compose down
+
+docker-logs:
+	docker compose logs --follow
+
+docker-ps:
+	docker compose ps
 
 format:
 	ruff format .
