@@ -115,6 +115,30 @@ class Settings(BaseSettings):
         le=20,
         validation_alias="RESEARCH_CRAWL_PAGE_LIMIT",
     )
+    crawler_request_delay_seconds: float = Field(
+        default=1.0,
+        ge=0,
+        le=60,
+        validation_alias="CRAWLER_REQUEST_DELAY_SECONDS",
+    )
+    crawler_max_response_bytes: int = Field(
+        default=2_000_000,
+        ge=1_024,
+        le=5_000_000,
+        validation_alias="CRAWLER_MAX_RESPONSE_BYTES",
+    )
+    crawler_timeout_seconds: float = Field(
+        default=15.0,
+        gt=0,
+        le=120,
+        validation_alias="CRAWLER_TIMEOUT_SECONDS",
+    )
+    crawler_max_retry_after_seconds: float = Field(
+        default=120.0,
+        ge=0,
+        le=3_600,
+        validation_alias="CRAWLER_MAX_RETRY_AFTER_SECONDS",
+    )
     opencorporates_api_key: SecretStr | None = Field(
         default=None,
         validation_alias="OPENCORPORATES_API_KEY",

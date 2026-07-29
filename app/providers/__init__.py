@@ -1,5 +1,16 @@
 """External service providers."""
 
+from app.providers.async_crawler import (
+    AsyncWebsiteCrawler,
+    CrawlBlockedError,
+    CrawlComplianceError,
+    CrawlContentTypeError,
+    CrawlError,
+    CrawlRedirectError,
+    CrawlResponseError,
+    CrawlResponseTooLargeError,
+    CrawlRestrictedPathError,
+)
 from app.providers.brave_search import (
     BraveSearchProvider,
     SearchAuthenticationError,
@@ -23,8 +34,17 @@ from app.providers.llm import (
 from app.providers.search import SearchProvider
 
 __all__ = [
+    "AsyncWebsiteCrawler",
     "BraveSearchProvider",
     "CompanyEnrichmentProvider",
+    "CrawlBlockedError",
+    "CrawlComplianceError",
+    "CrawlContentTypeError",
+    "CrawlError",
+    "CrawlRedirectError",
+    "CrawlResponseError",
+    "CrawlResponseTooLargeError",
+    "CrawlRestrictedPathError",
     "FakeLLMProvider",
     "FakeSearchProvider",
     "LLMProvider",

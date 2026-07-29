@@ -176,6 +176,28 @@ reported as warnings, so successful companies can still be returned and saved.
 `RESEARCH_SEARCH_PAGE_SIZE` and `RESEARCH_CRAWL_PAGE_LIMIT` bound provider and
 crawler work.
 
+## Safe website crawler
+
+`AsyncWebsiteCrawler` uses a pooled asynchronous HTTP client and performs only
+bounded GET requests. Every initial target, discovered page, and redirect hop
+must receive an `approved` result from `CompliancePreflightService` before it
+is fetched. Redirects are followed manually, and an unapproved cross-domain
+redirect stops the crawl before contacting that host.
+
+The crawler permits at most two concurrent responses per domain and spaces
+request starts using `CRAWLER_REQUEST_DELAY_SECONDS`. It streams HTML, XHTML,
+or plain text up to `CRAWLER_MAX_RESPONSE_BYTES`; other content types, binary
+paths, oversized bodies, authentication barriers, rate limits, CAPTCHA pages,
+Cloudflare challenges, and bot-protection pages stop processing. `Retry-After`
+is observed up to `CRAWLER_MAX_RETRY_AFTER_SECONDS` without retrying a blocked
+request.
+
+Account, login, administration, checkout, cart, customer-data, internal-search,
+and API routes are excluded before network access. The crawler does not submit
+forms, execute JavaScript, authenticate, or attempt to bypass restrictions.
+`RESEARCH_CRAWL_PAGE_LIMIT` defaults each company crawl to five pages, while
+`CRAWLER_TIMEOUT_SECONDS` bounds individual requests.
+
 ## Quality checks
 
 ```bash
