@@ -77,6 +77,20 @@ does not enable a persistence implementation. Confirm applicable rights under
 the [Brave Search API terms](https://api-dashboard.search.brave.com/documentation/resources/terms-of-service)
 and your plan before adding any storage path.
 
+## Compliance preflight
+
+`CompliancePreflightService` applies source-domain policy first, then checks
+`/robots.txt` before fetching any permitted content page. Robots checks use
+`PROJECT_USER_AGENT`, cache responses for `ROBOTS_CACHE_TTL_SECONDS` (up to 24
+hours), and reject unreachable robots files when `ROBOTS_STRICT_MODE=true`.
+Rules follow RFC 9309 wildcard, terminal-anchor, and most-specific-match
+semantics.
+
+Public terms links are identified and scanned only for automated-access risk
+language. Terms scanning is an advisory compliance signal, not legal advice;
+explicit or ambiguous language requires manual review. Terms signals never
+override a blocked domain or rejected target-path robots decision.
+
 ## Quality checks
 
 ```bash

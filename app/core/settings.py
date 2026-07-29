@@ -52,6 +52,33 @@ class Settings(BaseSettings):
         ge=0,
         validation_alias="SEARCH_BACKOFF_SECONDS",
     )
+    project_user_agent: str = Field(
+        default="AIWebResearchAgent/0.1",
+        min_length=1,
+        max_length=500,
+        validation_alias="PROJECT_USER_AGENT",
+    )
+    robots_cache_ttl_seconds: float = Field(
+        default=3_600,
+        ge=0,
+        le=86_400,
+        validation_alias="ROBOTS_CACHE_TTL_SECONDS",
+    )
+    robots_strict_mode: bool = Field(
+        default=True,
+        validation_alias="ROBOTS_STRICT_MODE",
+    )
+    compliance_http_timeout_seconds: float = Field(
+        default=10,
+        gt=0,
+        validation_alias="COMPLIANCE_HTTP_TIMEOUT_SECONDS",
+    )
+    terms_max_documents: int = Field(
+        default=3,
+        ge=1,
+        le=10,
+        validation_alias="TERMS_MAX_DOCUMENTS",
+    )
 
 
 @lru_cache(maxsize=1)

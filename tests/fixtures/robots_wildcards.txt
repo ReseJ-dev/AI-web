@@ -1,0 +1,10 @@
+User-agent: OtherBot
+Disallow: /
+
+User-agent: AIWebResearchAgent
+Disallow: /bot-only
+
+User-agent: *
+Disallow: /private/*
+Allow: /private/public$
+Disallow: /*.pdf$
