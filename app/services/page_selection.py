@@ -1,28 +1,19 @@
 """Deterministic same-domain company-page discovery and ranking."""
 
 import re
-from collections.abc import Iterable
+from collections.abc import Iterable, Mapping
 from dataclasses import dataclass
-from urllib.parse import unquote, urlsplit, urlunsplit
+from urllib.parse import unquote, urljoin, urlsplit, urlunsplit
 
-from app.models import (
-    NavigationLink,
-    PageCandidate,
-    PageCategory,
-    RankedPage,
-)
+from bs4 import BeautifulSoup, Tag
+
+from app.models import NavigationLink, PageCandidate, PageCategory, RankedPage
 
 _PATH_MARKERS: dict[PageCategory, frozenset[str]] = {
     PageCategory.ABOUT: frozenset({"about", "about-us", "company", "over-ons"}),
-    PageCategory.SERVICES: frozenset(
-        {
-            "services",
-            "solutions",
-            "expertise",
-            "diensten",
-            "oplossingen",
-        }
-    ),
+    PageCategory.SERVICES: frozenset({"services", "diensten"}),
+    PageCategory.SOLUTIONS: frozenset({"solutions", "oplossingen"}),
+    PageCategory.EXPERTISE: frozenset({"expertise"}),
     PageCategory.CONTACT: frozenset(
         {
             "contact",
@@ -35,13 +26,9 @@ _PATH_MARKERS: dict[PageCategory, frozenset[str]] = {
 }
 _TEXT_MARKERS: dict[PageCategory, tuple[str, ...]] = {
     PageCategory.ABOUT: ("about", "about us", "over ons"),
-    PageCategory.SERVICES: (
-        "services",
-        "solutions",
-        "expertise",
-        "diensten",
-        "oplossingen",
-    ),
+    PageCategory.SERVICES: ("service", "services", "diensten"),
+    PageCategory.SOLUTIONS: ("solution", "solutions", "oplossingen"),
+    PageCategory.EXPERTISE: ("expertise", "specialisms", "specialismen"),
     PageCategory.CONTACT: (
         "contact",
         "contact us",
@@ -50,12 +37,21 @@ _TEXT_MARKERS: dict[PageCategory, tuple[str, ...]] = {
         "contactgegevens",
     ),
 }
+_PAGE_TYPE_ORDER = (
+    PageCategory.ABOUT,
+    PageCategory.SERVICES,
+    PageCategory.SOLUTIONS,
+    PageCategory.EXPERTISE,
+    PageCategory.CONTACT,
+)
 _CATEGORY_BASE_SCORE = {
-    PageCategory.HOMEPAGE: 1_000,
-    PageCategory.ABOUT: 800,
-    PageCategory.SERVICES: 700,
-    PageCategory.CONTACT: 600,
-    PageCategory.RELEVANT: 500,
+    PageCategory.HOMEPAGE: 1_400,
+    PageCategory.ABOUT: 1_200,
+    PageCategory.SERVICES: 1_000,
+    PageCategory.SOLUTIONS: 800,
+    PageCategory.EXPERTISE: 600,
+    PageCategory.CONTACT: 400,
+    PageCategory.RELEVANT: 200,
     PageCategory.OTHER: 0,
 }
 _SPACE = re.compile(r"\s+")
@@ -120,8 +116,110 @@ def _path_segments(url: str) -> tuple[str, ...]:
     )
 
 
+def _compact_text(value: str) -> str:
+    """Collapse HTML-derived text without retaining layout whitespace."""
+    return _SPACE.sub(" ", value).strip()
+
+
+def _is_navigation_anchor(anchor: Tag) -> bool:
+    """Return whether an anchor appears in site navigation or a header."""
+    return any(
+        parent.name in {"nav", "header"}
+        or (
+            isinstance(parent.get("role"), str)
+            and str(parent.get("role")).casefold() == "navigation"
+        )
+        for parent in anchor.parents
+        if isinstance(parent, Tag)
+    )
+
+
 class PageSelectionService:
-    """Select a compact, explainable set of useful company pages."""
+    """Discover and rank a compact set of useful company pages."""
+
+    def discover(
+        self,
+        homepage_url: str,
+        html_pages: str | Mapping[str, str],
+        *,
+        relevant_terms: Iterable[str] = (),
+        limit: int = 5,
+    ) -> list[RankedPage]:
+        """Discover links from supplied HTML and rank same-domain pages.
+
+        This method performs no network requests. A mapping may contain HTML for
+        multiple already-approved pages so their titles and headings can enrich
+        candidates. Form actions, scripts, and external-domain documents are
+        never considered.
+        """
+        canonical_homepage = _canonical_page_url(homepage_url)
+        approved_host = _company_host(urlsplit(canonical_homepage).hostname)
+        documents: Mapping[str, str] = (
+            {canonical_homepage: html_pages}
+            if isinstance(html_pages, str)
+            else html_pages
+        )
+        candidates: list[PageCandidate] = []
+        navigation_position = 0
+
+        for source_url, html in documents.items():
+            try:
+                canonical_source = _canonical_page_url(source_url)
+            except ValueError:
+                continue
+            if _company_host(urlsplit(canonical_source).hostname) != approved_host:
+                continue
+
+            soup = BeautifulSoup(html, "html.parser")
+            title_tag = soup.find("title")
+            title = (
+                _compact_text(title_tag.get_text(" ", strip=True))[:1_000]
+                if isinstance(title_tag, Tag)
+                else ""
+            )
+            headings = [
+                compacted[:1_000]
+                for heading in soup.find_all(re.compile(r"^h[1-6]$"))
+                if (compacted := _compact_text(heading.get_text(" ", strip=True)))
+            ]
+            candidates.append(
+                PageCandidate(
+                    url=canonical_source,
+                    title=title,
+                    headings=headings,
+                )
+            )
+
+            for anchor in soup.find_all("a", href=True):
+                href = anchor.get("href")
+                if not isinstance(href, str) or not href.strip():
+                    continue
+                try:
+                    target = _canonical_page_url(
+                        urljoin(canonical_source, href.strip())
+                    )
+                except ValueError:
+                    continue
+                position: int | None = None
+                if _is_navigation_anchor(anchor):
+                    position = navigation_position
+                    navigation_position += 1
+                candidates.append(
+                    PageCandidate(
+                        url=target,
+                        anchor_text=_compact_text(anchor.get_text(" ", strip=True))[
+                            :1_000
+                        ],
+                        navigation_position=position,
+                    )
+                )
+
+        return self.select(
+            canonical_homepage,
+            candidates,
+            relevant_terms=relevant_terms,
+            limit=limit,
+        )
 
     def select(
         self,
@@ -158,10 +256,11 @@ class PageSelectionService:
             normalized_candidate = candidate.model_copy(update={"url": normalized_url})
             identity = _page_identity(normalized_url)
             existing = unique.get(identity)
-            if existing is None or self._richness(
+            unique[identity] = (
                 normalized_candidate
-            ) > self._richness(existing):
-                unique[identity] = normalized_candidate
+                if existing is None
+                else self._merge_candidates(existing, normalized_candidate)
+            )
 
         ranked = [
             self._rank_candidate(
@@ -171,21 +270,32 @@ class PageSelectionService:
             )
             for candidate in unique.values()
         ]
-        ranked.sort(
-            key=lambda page: (
-                -page.score,
-                str(page.url),
-            )
-        )
+        ranked.sort(key=lambda page: (-page.score, str(page.url)))
         return ranked[:limit]
 
     @staticmethod
-    def _richness(candidate: PageCandidate) -> int:
-        """Measure how much useful ranking context a candidate contains."""
-        return (
-            len(candidate.anchor_text)
-            + len(candidate.title)
-            + sum(len(heading) for heading in candidate.headings)
+    def _merge_candidates(
+        existing: PageCandidate,
+        incoming: PageCandidate,
+    ) -> PageCandidate:
+        """Combine link context and document metadata for a single URL."""
+        positions = [
+            position
+            for position in (
+                existing.navigation_position,
+                incoming.navigation_position,
+            )
+            if position is not None
+        ]
+        return PageCandidate(
+            url=existing.url,
+            anchor_text=max(
+                (existing.anchor_text, incoming.anchor_text),
+                key=len,
+            ),
+            title=max((existing.title, incoming.title), key=len),
+            headings=list(dict.fromkeys((*existing.headings, *incoming.headings))),
+            navigation_position=min(positions) if positions else None,
         )
 
     def _rank_candidate(
@@ -201,16 +311,27 @@ class PageSelectionService:
             canonical_homepage=canonical_homepage,
             relevant_terms=relevant_terms,
         )
+        navigation_bonus = 0
+        reasons = list(classification.reasons)
+        if candidate.navigation_position is not None:
+            navigation_bonus = max(1, 25 - min(candidate.navigation_position, 24))
+            reasons.append(
+                "Link appears in site navigation at position "
+                f"{candidate.navigation_position + 1}."
+            )
         return RankedPage(
             url=candidate.url,
             category=classification.category,
             score=(
-                _CATEGORY_BASE_SCORE[classification.category] + classification.bonus
+                _CATEGORY_BASE_SCORE[classification.category]
+                + classification.bonus
+                + navigation_bonus
             ),
-            reasons=list(classification.reasons),
+            reasons=reasons,
             anchor_text=candidate.anchor_text,
             title=candidate.title,
             headings=candidate.headings,
+            navigation_position=candidate.navigation_position,
         )
 
     @staticmethod
@@ -234,11 +355,7 @@ class PageSelectionService:
         title = _normalized_text(candidate.title)
         headings = _normalized_text(" ".join(candidate.headings))
 
-        for category in (
-            PageCategory.ABOUT,
-            PageCategory.SERVICES,
-            PageCategory.CONTACT,
-        ):
+        for category in _PAGE_TYPE_ORDER:
             if any(segment in _PATH_MARKERS[category] for segment in segments):
                 reasons = [f"URL path matches the {category.value} page pattern."]
                 bonus = 40
@@ -258,11 +375,7 @@ class PageSelectionService:
                     bonus=bonus,
                 )
 
-        for category in (
-            PageCategory.ABOUT,
-            PageCategory.SERVICES,
-            PageCategory.CONTACT,
-        ):
+        for category in _PAGE_TYPE_ORDER:
             reasons = []
             bonus = 0
             markers = _TEXT_MARKERS[category]

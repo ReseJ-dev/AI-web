@@ -11,6 +11,8 @@ class PageCategory(StrEnum):
     HOMEPAGE = "homepage"
     ABOUT = "about"
     SERVICES = "services"
+    SOLUTIONS = "solutions"
+    EXPERTISE = "expertise"
     CONTACT = "contact"
     RELEVANT = "relevant"
     OTHER = "other"
@@ -34,6 +36,7 @@ class PageCandidate(BaseModel):
     anchor_text: str = Field(default="", max_length=1_000)
     title: str = Field(default="", max_length=1_000)
     headings: list[str] = Field(default_factory=list)
+    navigation_position: int | None = Field(default=None, ge=0)
 
 
 class RankedPage(BaseModel):
@@ -48,6 +51,7 @@ class RankedPage(BaseModel):
     anchor_text: str = ""
     title: str = ""
     headings: list[str] = Field(default_factory=list)
+    navigation_position: int | None = Field(default=None, ge=0)
 
 
 class ExtractedPageContent(BaseModel):

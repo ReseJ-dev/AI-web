@@ -94,9 +94,12 @@ override a blocked domain or rejected target-path robots decision.
 ## Page selection and content extraction
 
 `PageSelectionService` ranks same-domain company pages using URL paths, anchor
-text, titles, headings, and relevant platform or industry terms. It recognizes
+text, titles, headings, navigation position, and relevant platform or industry
+terms. Its local `discover()` method reads anchors from supplied, already
+approved HTML without making requests or inspecting form actions. It recognizes
 common English and Dutch about, services, solutions, expertise, and contact
-routes.
+routes, strictly filters other domains, and preserves the priority order from
+homepage through topic-specific service pages.
 
 `HtmlContentExtractor` processes supplied HTML locally; it performs no network
 requests. It preserves canonical, meta, Open Graph, and Organization JSON-LD
