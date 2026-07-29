@@ -181,6 +181,34 @@ class Settings(BaseSettings):
         default=None,
         validation_alias="OPENCORPORATES_API_KEY",
     )
+    opencorporates_licensed_data_use_allowed: bool = Field(
+        default=False,
+        validation_alias="OPENCORPORATES_LICENSED_DATA_USE_ALLOWED",
+    )
+    opencorporates_timeout_seconds: float = Field(
+        default=10.0,
+        gt=0,
+        le=120,
+        validation_alias="OPENCORPORATES_TIMEOUT_SECONDS",
+    )
+    opencorporates_max_retries: int = Field(
+        default=3,
+        ge=0,
+        le=10,
+        validation_alias="OPENCORPORATES_MAX_RETRIES",
+    )
+    opencorporates_backoff_seconds: float = Field(
+        default=0.5,
+        ge=0,
+        le=30,
+        validation_alias="OPENCORPORATES_BACKOFF_SECONDS",
+    )
+    opencorporates_max_retry_after_seconds: float = Field(
+        default=60.0,
+        ge=0,
+        le=3_600,
+        validation_alias="OPENCORPORATES_MAX_RETRY_AFTER_SECONDS",
+    )
     wikidata_enabled: bool = Field(
         default=False,
         validation_alias="WIKIDATA_ENABLED",

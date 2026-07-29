@@ -193,6 +193,19 @@ exporters are replaceable asynchronous interfaces. Only configured, injected
 providers run. Search candidates remain transient; final verified records and
 skipped-source reports use repository interfaces.
 
+`OpenCorporatesProvider` uses only the official JSON API for company
+verification and enrichment; it never fetches or scrapes OpenCorporates HTML
+pages. It keeps the independently verified website identity unchanged and adds
+only unoccupied official-name, jurisdiction, company-number, status, registered
+location, and registry-URL fields. Every added value cites the OpenCorporates
+company URL and carries OpenCorporates and registry-publisher attribution.
+
+Set `OPENCORPORATES_API_KEY` and explicitly set
+`OPENCORPORATES_LICENSED_DATA_USE_ALLOWED=true` only when the configured API
+account and licence permit this enrichment and retention. The provider is
+disabled otherwise. Authentication uses the API token header; timeout,
+exponential retry, and maximum `Retry-After` behavior are configurable.
+
 Progress callbacks receive ordered events from `planning` through `completed`,
 `completed_with_warnings`, or `failed`. Candidate-level compliance, crawl,
 extraction, enrichment, persistence, and export failures are isolated and

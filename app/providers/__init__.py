@@ -34,6 +34,15 @@ from app.providers.llm import (
     LLMProviderResponseError,
     resolve_llm_provider,
 )
+from app.providers.opencorporates import (
+    OpenCorporatesAuthenticationError,
+    OpenCorporatesConfigurationError,
+    OpenCorporatesProvider,
+    OpenCorporatesProviderError,
+    OpenCorporatesRateLimitError,
+    OpenCorporatesResponseError,
+    OpenCorporatesUnavailableError,
+)
 from app.providers.search import SearchProvider
 
 __all__ = [
@@ -55,6 +64,13 @@ __all__ = [
     "LLMProviderConfigurationError",
     "LLMProviderError",
     "LLMProviderResponseError",
+    "OpenCorporatesAuthenticationError",
+    "OpenCorporatesConfigurationError",
+    "OpenCorporatesProvider",
+    "OpenCorporatesProviderError",
+    "OpenCorporatesRateLimitError",
+    "OpenCorporatesResponseError",
+    "OpenCorporatesUnavailableError",
     "SearchAuthenticationError",
     "SearchAuthorizationError",
     "SearchCall",

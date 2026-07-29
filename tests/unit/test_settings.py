@@ -25,6 +25,9 @@ def test_settings_load_from_environment(monkeypatch: pytest.MonkeyPatch) -> None
     monkeypatch.setenv("CRAWLER_MAX_RESPONSE_BYTES", "500000")
     monkeypatch.setenv("CRAWLER_TIMEOUT_SECONDS", "8")
     monkeypatch.setenv("CRAWLER_MAX_RETRY_AFTER_SECONDS", "30")
+    monkeypatch.setenv("OPENCORPORATES_API_KEY", "registry-secret")
+    monkeypatch.setenv("OPENCORPORATES_LICENSED_DATA_USE_ALLOWED", "true")
+    monkeypatch.setenv("OPENCORPORATES_MAX_RETRIES", "2")
 
     settings = Settings()
 
@@ -46,3 +49,7 @@ def test_settings_load_from_environment(monkeypatch: pytest.MonkeyPatch) -> None
     assert settings.crawler_max_response_bytes == 500_000
     assert settings.crawler_timeout_seconds == 8
     assert settings.crawler_max_retry_after_seconds == 30
+    assert settings.opencorporates_api_key is not None
+    assert settings.opencorporates_api_key.get_secret_value() == "registry-secret"
+    assert settings.opencorporates_licensed_data_use_allowed is True
+    assert settings.opencorporates_max_retries == 2
