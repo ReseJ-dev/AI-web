@@ -97,6 +97,36 @@ class Settings(BaseSettings):
         max_length=200,
         validation_alias="LLM_MODEL",
     )
+    research_search_budget: int = Field(
+        default=20,
+        ge=1,
+        le=50,
+        validation_alias="RESEARCH_SEARCH_BUDGET",
+    )
+    research_search_page_size: int = Field(
+        default=20,
+        ge=1,
+        le=20,
+        validation_alias="RESEARCH_SEARCH_PAGE_SIZE",
+    )
+    research_crawl_page_limit: int = Field(
+        default=5,
+        ge=1,
+        le=20,
+        validation_alias="RESEARCH_CRAWL_PAGE_LIMIT",
+    )
+    opencorporates_api_key: SecretStr | None = Field(
+        default=None,
+        validation_alias="OPENCORPORATES_API_KEY",
+    )
+    wikidata_enabled: bool = Field(
+        default=False,
+        validation_alias="WIKIDATA_ENABLED",
+    )
+    geonames_username: SecretStr | None = Field(
+        default=None,
+        validation_alias="GEONAMES_USERNAME",
+    )
 
 
 @lru_cache(maxsize=1)

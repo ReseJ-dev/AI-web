@@ -3,8 +3,9 @@
 A portfolio project for a compliant web research and structured data extraction
 agent. It includes source policy and robots preflight, transient search,
 company-page selection, clean HTML extraction, and evidence-based structured
-company extraction. Crawling orchestration and Google Sheets integration are
-not implemented yet.
+company extraction, deduplication, scoring, and resilient research
+orchestration. Concrete crawler, enrichment, and exporter adapters are injected
+at deployment time; Google Sheets integration is not implemented yet.
 
 ## Requirements
 
@@ -153,6 +154,27 @@ as proof of location. Contradictory, inferred, low-confidence, or uncited facts
 reduce evidence quality. Unsupported criteria score zero, and model-proposed
 relevance numbers are ignored—the final numerical score is always computed by
 deterministic application code.
+
+## Research orchestration
+
+`ResearchOrchestrator` coordinates request validation, query planning,
+transient search, source filtering, compliance preflight, crawling, page
+selection, structured extraction, optional enrichment, deduplication,
+deterministic scoring, persistence, and optional export. Search continues until
+the requested independently verified record count is reached or
+`RESEARCH_SEARCH_BUDGET` is exhausted.
+
+The crawler, OpenCorporates/Wikidata/GeoNames enrichment providers, and result
+exporters are replaceable asynchronous interfaces. Only configured, injected
+providers run. Search candidates remain transient; final verified records and
+skipped-source reports use repository interfaces.
+
+Progress callbacks receive ordered events from `planning` through `completed`,
+`completed_with_warnings`, or `failed`. Candidate-level compliance, crawl,
+extraction, enrichment, persistence, and export failures are isolated and
+reported as warnings, so successful companies can still be returned and saved.
+`RESEARCH_SEARCH_PAGE_SIZE` and `RESEARCH_CRAWL_PAGE_LIMIT` bound provider and
+crawler work.
 
 ## Quality checks
 

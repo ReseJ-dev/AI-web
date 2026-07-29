@@ -11,6 +11,8 @@ from app.providers.brave_search import (
     SearchResponseError,
     SearchTimeoutError,
 )
+from app.providers.crawling import WebsiteCrawler
+from app.providers.enrichment import CompanyEnrichmentProvider
 from app.providers.fake_llm import FakeLLMProvider
 from app.providers.fake_search import FakeSearchProvider, SearchCall
 from app.providers.llm import (
@@ -22,6 +24,7 @@ from app.providers.search import SearchProvider
 
 __all__ = [
     "BraveSearchProvider",
+    "CompanyEnrichmentProvider",
     "FakeLLMProvider",
     "FakeSearchProvider",
     "LLMProvider",
@@ -36,5 +39,6 @@ __all__ = [
     "SearchRateLimitError",
     "SearchResponseError",
     "SearchTimeoutError",
+    "WebsiteCrawler",
     "resolve_llm_provider",
 ]
