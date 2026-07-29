@@ -44,6 +44,12 @@ from app.models.extraction import (
     LLMPageInput,
     SupportedField,
 )
+from app.models.relevance import (
+    ComponentScore,
+    RelevanceComponent,
+    RelevanceScoreResult,
+    ScorePenalty,
+)
 from app.models.search import SearchCandidate, SearchParameters
 
 __all__ = [
@@ -53,6 +59,7 @@ __all__ = [
     "ComplianceDecision",
     "CompliancePreflightResult",
     "ComplianceStatus",
+    "ComponentScore",
     "EntityResolutionOutcome",
     "EntityResolutionResult",
     "Evidence",
@@ -71,12 +78,15 @@ __all__ = [
     "PageCategory",
     "PreflightDecision",
     "RankedPage",
+    "RelevanceComponent",
     "RelevanceScoreBreakdown",
+    "RelevanceScoreResult",
     "RequestedField",
     "ResearchRequest",
     "ResearchRun",
     "ResearchRunStatus",
     "RobotsPolicyRecord",
+    "ScorePenalty",
     "SearchCandidate",
     "SearchParameters",
     "SkippedSource",
