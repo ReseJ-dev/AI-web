@@ -85,6 +85,18 @@ class Settings(BaseSettings):
         le=200_000,
         validation_alias="HTML_CONTENT_MAX_CHARS",
     )
+    llm_provider: str = Field(
+        default="disabled",
+        min_length=1,
+        max_length=100,
+        validation_alias="LLM_PROVIDER",
+    )
+    llm_model: str = Field(
+        default="not-configured",
+        min_length=1,
+        max_length=200,
+        validation_alias="LLM_MODEL",
+    )
 
 
 @lru_cache(maxsize=1)

@@ -27,9 +27,19 @@ from app.models.domain import (
     ResearchRunStatus,
     SkippedSource,
 )
+from app.models.extraction import (
+    CompanyExtraction,
+    ExtractionStatus,
+    FactBasis,
+    LLMCompanyResponse,
+    LLMExtractionRequest,
+    LLMPageInput,
+    SupportedField,
+)
 from app.models.search import SearchCandidate, SearchParameters
 
 __all__ = [
+    "CompanyExtraction",
     "CompanyRecord",
     "ComplianceDecision",
     "CompliancePreflightResult",
@@ -37,6 +47,11 @@ __all__ = [
     "Evidence",
     "ExtractedField",
     "ExtractedPageContent",
+    "ExtractionStatus",
+    "FactBasis",
+    "LLMCompanyResponse",
+    "LLMExtractionRequest",
+    "LLMPageInput",
     "NavigationLink",
     "PageCandidate",
     "PageCategory",
@@ -51,6 +66,7 @@ __all__ = [
     "SearchCandidate",
     "SearchParameters",
     "SkippedSource",
+    "SupportedField",
     "TermsLink",
     "TermsPolicyResult",
 ]

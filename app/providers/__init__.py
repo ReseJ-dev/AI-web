@@ -11,12 +11,21 @@ from app.providers.brave_search import (
     SearchResponseError,
     SearchTimeoutError,
 )
+from app.providers.fake_llm import FakeLLMProvider
 from app.providers.fake_search import FakeSearchProvider, SearchCall
+from app.providers.llm import (
+    LLMProvider,
+    LLMProviderConfigurationError,
+    resolve_llm_provider,
+)
 from app.providers.search import SearchProvider
 
 __all__ = [
     "BraveSearchProvider",
+    "FakeLLMProvider",
     "FakeSearchProvider",
+    "LLMProvider",
+    "LLMProviderConfigurationError",
     "SearchAuthenticationError",
     "SearchAuthorizationError",
     "SearchCall",
@@ -27,4 +36,5 @@ __all__ = [
     "SearchRateLimitError",
     "SearchResponseError",
     "SearchTimeoutError",
+    "resolve_llm_provider",
 ]

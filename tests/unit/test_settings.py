@@ -15,6 +15,8 @@ def test_settings_load_from_environment(monkeypatch: pytest.MonkeyPatch) -> None
     monkeypatch.setenv("SOURCE_POLICY_CONFIG_DIR", "/tmp/policy-config")
     monkeypatch.setenv("BRAVE_SEARCH_API_KEY", "test-secret")
     monkeypatch.setenv("SEARCH_RESULT_RETENTION_ALLOWED", "true")
+    monkeypatch.setenv("LLM_PROVIDER", "fake")
+    monkeypatch.setenv("LLM_MODEL", "test-company-model")
 
     settings = Settings()
 
@@ -25,3 +27,5 @@ def test_settings_load_from_environment(monkeypatch: pytest.MonkeyPatch) -> None
     assert settings.brave_search_api_key is not None
     assert settings.brave_search_api_key.get_secret_value() == "test-secret"
     assert settings.search_result_retention_allowed is True
+    assert settings.llm_provider == "fake"
+    assert settings.llm_model == "test-company-model"

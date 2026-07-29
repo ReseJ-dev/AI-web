@@ -1,11 +1,10 @@
 # AI Web Research & Data Extraction Agent
 
-A portfolio project for a web research and structured data extraction agent.
-This initial commit provides the application skeleton, development tooling, a
-FastAPI health endpoint, and a minimal Streamlit interface.
-
-Search, crawling, AI extraction, and Google Sheets integration are intentionally
-out of scope for this version.
+A portfolio project for a compliant web research and structured data extraction
+agent. It includes source policy and robots preflight, transient search,
+company-page selection, clean HTML extraction, and evidence-based structured
+company extraction. Crawling orchestration and Google Sheets integration are
+not implemented yet.
 
 ## Requirements
 
@@ -102,7 +101,23 @@ routes.
 requests. It preserves canonical, meta, Open Graph, and Organization JSON-LD
 metadata while removing executable, hidden, cookie, navigation, menu, and
 footer content. Clean visible text is deduplicated and limited by
-`HTML_CONTENT_MAX_CHARS` before it can be passed to a future LLM step.
+`HTML_CONTENT_MAX_CHARS` before it can be passed to an LLM provider.
+
+## Structured company extraction
+
+Structured extraction runs deterministic metadata and page-signal extraction
+before an optional LLM pass. The composite strategy preserves deterministic
+facts and uses model output only to fill unsupported fields. Every non-null
+field records whether it is explicit or inferred and cites its evidence URLs;
+required fields without evidence reject the extraction.
+
+LLM integrations receive only clean page text, source URLs, requested field
+names, and extraction instructions. Responses must match a strict Pydantic
+schema. Core company facts cannot be inferred, foreign evidence URLs and long
+copied summaries are rejected, and employee personal-data fields are never sent
+to the provider. Select a registered provider and model with `LLM_PROVIDER` and
+`LLM_MODEL`. This commit includes an in-memory fake provider; vendor adapters can
+be registered without changing extraction services.
 
 ## Quality checks
 

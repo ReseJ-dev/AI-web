@@ -14,18 +14,28 @@ from app.services.source_policy import (
     SourcePolicyResult,
     SourcePolicyService,
 )
+from app.services.structured_data_extraction import (
+    CompositeCompanyExtractor,
+    DeterministicCompanyExtractor,
+    LLMCompanyExtractor,
+    StructuredDataExtractor,
+)
 from app.services.terms_policy import TermsPolicyScanner
 
 __all__ = [
     "CompliancePreflightService",
+    "CompositeCompanyExtractor",
+    "DeterministicCompanyExtractor",
     "HtmlContentExtractor",
     "InvalidDomainError",
+    "LLMCompanyExtractor",
     "PageSelectionService",
     "QueryPlanner",
     "RobotsPolicyService",
     "SourcePolicyDecision",
     "SourcePolicyResult",
     "SourcePolicyService",
+    "StructuredDataExtractor",
     "TermsPolicyScanner",
     "normalize_domain",
 ]
