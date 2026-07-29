@@ -206,6 +206,22 @@ account and licence permit this enrichment and retention. The provider is
 disabled otherwise. Authentication uses the API token header; timeout,
 exponential retry, and maximum `Retry-After` behavior are configurable.
 
+`WikidataProvider` queries the official Wikidata SPARQL endpoint with the
+configured project user agent. An entity is accepted only when its exact
+label/alias result includes an official website matching the independently
+verified company site. Wikidata identity, website corroboration, country,
+headquarters, and industry values cite the entity page and carry Wikidata
+attribution. Conflicting or ambiguous values produce warnings and never replace
+stronger website evidence. Enable it with `WIKIDATA_ENABLED=true`.
+
+`GeoNamesProvider` uses the official secure country-info and populated-place
+JSON services. It normalizes evidence-backed country and city values, adds ISO
+country codes and GeoNames identifiers, and reports geographic contradictions
+without rewriting source fields. Stable country and place lookups are cached
+for `GEONAMES_CACHE_TTL_SECONDS`. Set `GEONAMES_USERNAME` to an application
+account; the documented `demo` account is not used. Every geographic addition
+links to GeoNames and retains GeoNames attribution.
+
 Progress callbacks receive ordered events from `planning` through `completed`,
 `completed_with_warnings`, or `failed`. Candidate-level compliance, crawl,
 extraction, enrichment, persistence, and export failures are isolated and

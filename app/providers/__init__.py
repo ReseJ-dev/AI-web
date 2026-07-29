@@ -26,6 +26,15 @@ from app.providers.crawling import WebsiteCrawler
 from app.providers.enrichment import CompanyEnrichmentProvider
 from app.providers.fake_llm import FakeLLMProvider
 from app.providers.fake_search import FakeSearchProvider, SearchCall
+from app.providers.geonames import (
+    GeoNamesAuthenticationError,
+    GeoNamesConfigurationError,
+    GeoNamesProvider,
+    GeoNamesProviderError,
+    GeoNamesRateLimitError,
+    GeoNamesResponseError,
+    GeoNamesUnavailableError,
+)
 from app.providers.http_llm import ConfigurableHttpLLMProvider
 from app.providers.llm import (
     LLMProvider,
@@ -44,6 +53,14 @@ from app.providers.opencorporates import (
     OpenCorporatesUnavailableError,
 )
 from app.providers.search import SearchProvider
+from app.providers.wikidata import (
+    WikidataConfigurationError,
+    WikidataProvider,
+    WikidataProviderError,
+    WikidataRateLimitError,
+    WikidataResponseError,
+    WikidataUnavailableError,
+)
 
 __all__ = [
     "AsyncWebsiteCrawler",
@@ -60,6 +77,13 @@ __all__ = [
     "CrawlRestrictedPathError",
     "FakeLLMProvider",
     "FakeSearchProvider",
+    "GeoNamesAuthenticationError",
+    "GeoNamesConfigurationError",
+    "GeoNamesProvider",
+    "GeoNamesProviderError",
+    "GeoNamesRateLimitError",
+    "GeoNamesResponseError",
+    "GeoNamesUnavailableError",
     "LLMProvider",
     "LLMProviderConfigurationError",
     "LLMProviderError",
@@ -82,5 +106,11 @@ __all__ = [
     "SearchResponseError",
     "SearchTimeoutError",
     "WebsiteCrawler",
+    "WikidataConfigurationError",
+    "WikidataProvider",
+    "WikidataProviderError",
+    "WikidataRateLimitError",
+    "WikidataResponseError",
+    "WikidataUnavailableError",
     "resolve_llm_provider",
 ]

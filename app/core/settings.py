@@ -213,9 +213,51 @@ class Settings(BaseSettings):
         default=False,
         validation_alias="WIKIDATA_ENABLED",
     )
+    wikidata_timeout_seconds: float = Field(
+        default=15.0,
+        gt=0,
+        le=120,
+        validation_alias="WIKIDATA_TIMEOUT_SECONDS",
+    )
+    wikidata_max_retries: int = Field(
+        default=3,
+        ge=0,
+        le=10,
+        validation_alias="WIKIDATA_MAX_RETRIES",
+    )
+    wikidata_backoff_seconds: float = Field(
+        default=0.5,
+        ge=0,
+        le=30,
+        validation_alias="WIKIDATA_BACKOFF_SECONDS",
+    )
     geonames_username: SecretStr | None = Field(
         default=None,
         validation_alias="GEONAMES_USERNAME",
+    )
+    geonames_timeout_seconds: float = Field(
+        default=10.0,
+        gt=0,
+        le=120,
+        validation_alias="GEONAMES_TIMEOUT_SECONDS",
+    )
+    geonames_max_retries: int = Field(
+        default=3,
+        ge=0,
+        le=10,
+        validation_alias="GEONAMES_MAX_RETRIES",
+    )
+    geonames_backoff_seconds: float = Field(
+        default=0.5,
+        ge=0,
+        le=30,
+        validation_alias="GEONAMES_BACKOFF_SECONDS",
+    )
+    geonames_cache_ttl_seconds: float = Field(
+        default=86_400,
+        ge=60,
+        le=2_592_000,
+        validation_alias="GEONAMES_CACHE_TTL_SECONDS",
     )
 
 

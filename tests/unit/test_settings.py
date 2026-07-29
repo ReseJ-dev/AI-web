@@ -28,6 +28,10 @@ def test_settings_load_from_environment(monkeypatch: pytest.MonkeyPatch) -> None
     monkeypatch.setenv("OPENCORPORATES_API_KEY", "registry-secret")
     monkeypatch.setenv("OPENCORPORATES_LICENSED_DATA_USE_ALLOWED", "true")
     monkeypatch.setenv("OPENCORPORATES_MAX_RETRIES", "2")
+    monkeypatch.setenv("WIKIDATA_ENABLED", "true")
+    monkeypatch.setenv("WIKIDATA_TIMEOUT_SECONDS", "12")
+    monkeypatch.setenv("GEONAMES_USERNAME", "geo-user")
+    monkeypatch.setenv("GEONAMES_CACHE_TTL_SECONDS", "7200")
 
     settings = Settings()
 
@@ -53,3 +57,8 @@ def test_settings_load_from_environment(monkeypatch: pytest.MonkeyPatch) -> None
     assert settings.opencorporates_api_key.get_secret_value() == "registry-secret"
     assert settings.opencorporates_licensed_data_use_allowed is True
     assert settings.opencorporates_max_retries == 2
+    assert settings.wikidata_enabled is True
+    assert settings.wikidata_timeout_seconds == 12
+    assert settings.geonames_username is not None
+    assert settings.geonames_username.get_secret_value() == "geo-user"
+    assert settings.geonames_cache_ttl_seconds == 7_200
