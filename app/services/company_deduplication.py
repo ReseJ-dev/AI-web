@@ -33,16 +33,23 @@ _PUBLIC_SUFFIX_EXTRACTOR = TLDExtract(
 _TRACKING_PARAMETERS = frozenset(
     {
         "_ga",
+        "_gl",
         "dclid",
         "fbclid",
+        "gad_source",
         "gclid",
+        "hscid",
+        "hsctatracking",
         "igshid",
         "mc_cid",
         "mc_eid",
+        "mkt_tok",
         "msclkid",
         "ref",
         "referrer",
+        "srsltid",
         "source",
+        "vero_id",
         "yclid",
     }
 )
@@ -53,12 +60,15 @@ _LEGAL_SUFFIXES = tuple(
         "limited liability company",
         "public limited company",
         "societe a responsabilite limitee",
+        "sp z o o",
         "naamloze vennootschap",
         "besloten vennootschap",
+        "b v b a",
         "incorporated",
         "corporation",
         "company",
         "limited",
+        "s l u",
         "b v",
         "n v",
         "s a r l",
@@ -67,6 +77,11 @@ _LEGAL_SUFFIXES = tuple(
         "s r l",
         "s a",
         "s r o",
+        "s l",
+        "a s",
+        "p c",
+        "s c",
+        "o ü",
         "p t e",
         "p t y",
         "l l c",
@@ -86,6 +101,9 @@ _LEGAL_SUFFIXES = tuple(
         "srl",
         "sa",
         "sro",
+        "slu",
+        "oü",
+        "ou",
         "pte",
         "pty",
         "kft",
@@ -101,6 +119,7 @@ _LEGAL_SUFFIXES = tuple(
     )
 )
 _WIKIDATA_ID = re.compile(r"^q\d+$", re.IGNORECASE)
+_OPENCORPORATES_JURISDICTION = re.compile(r"^[a-z0-9]+(?:_[a-z0-9]+)*$")
 _IDENTIFIER_FIELD_SOURCES = {
     "opencorporates_id": OfficialIdentifierSource.OPENCORPORATES,
     "wikidata_id": OfficialIdentifierSource.WIKIDATA,
@@ -210,14 +229,32 @@ def normalize_official_identifier(
     """Normalize Wikidata and OpenCorporates identifier representations."""
     value = identifier.value.strip()
     if identifier.source is OfficialIdentifierSource.WIKIDATA:
-        if "/" in value:
-            value = urlsplit(value).path.rstrip("/").rsplit("/", maxsplit=1)[-1]
+        if "://" in value:
+            parsed = urlsplit(value)
+            host = (parsed.hostname or "").casefold()
+            path_parts = parsed.path.strip("/").split("/")
+            if (
+                host not in {"wikidata.org", "www.wikidata.org"}
+                or len(path_parts) != 2
+                or path_parts[0].casefold() not in {"entity", "wiki"}
+            ):
+                raise ValueError(f"invalid Wikidata identifier: {identifier.value!r}")
+            value = path_parts[1]
         if not _WIKIDATA_ID.fullmatch(value):
             raise ValueError(f"invalid Wikidata identifier: {identifier.value!r}")
         value = value.upper()
     else:
         if "://" in value:
-            path = unquote(urlsplit(value).path).strip("/")
+            parsed = urlsplit(value)
+            if (parsed.hostname or "").casefold() not in {
+                "api.opencorporates.com",
+                "opencorporates.com",
+                "www.opencorporates.com",
+            }:
+                raise ValueError(
+                    f"invalid OpenCorporates identifier: {identifier.value!r}"
+                )
+            path = unquote(parsed.path).strip("/")
             marker = "companies/"
             if marker not in path.casefold():
                 raise ValueError(
@@ -226,7 +263,13 @@ def normalize_official_identifier(
             marker_index = path.casefold().index(marker) + len(marker)
             value = path[marker_index:]
         value = re.sub(r"\s+", "", value).strip("/").casefold()
-        if "/" not in value:
+        parts = value.split("/")
+        if (
+            len(parts) != 2
+            or _OPENCORPORATES_JURISDICTION.fullmatch(parts[0]) is None
+            or not parts[1]
+            or len(parts[1]) > 300
+        ):
             raise ValueError(
                 "OpenCorporates identifiers must include jurisdiction and number"
             )
@@ -273,9 +316,9 @@ def _all_evidence_urls(entities: Iterable[CompanyEntity]) -> list[HttpUrl]:
             for evidence in field.evidence:
                 candidates.extend(evidence.urls)
         for url in candidates:
-            normalized = normalize_company_url(str(url))
-            if normalized not in seen:
-                seen.add(normalized)
+            exact_url = str(url)
+            if exact_url not in seen:
+                seen.add(exact_url)
                 urls.append(url)
     return urls
 
@@ -364,6 +407,22 @@ class CompanyDeduplicationService:
                 "Malformed official identifier data requires human verification: "
                 + "; ".join(invalid_identifiers)
                 + "."
+            )
+            return self._decision(
+                left_entity,
+                right_entity,
+                EntityResolutionOutcome.MANUAL_REVIEW_REQUIRED,
+                0.5,
+                explanation,
+            )
+        ambiguous_source = self._ambiguous_identifier_source(
+            identifiers_left,
+            identifiers_right,
+        )
+        if ambiguous_source is not None:
+            explanation.append(
+                f"Multiple {ambiguous_source.value} identifiers occur within one "
+                "record; automatic entity resolution requires human verification."
             )
             return self._decision(
                 left_entity,
@@ -542,6 +601,23 @@ class CompanyDeduplicationService:
                 continue
             normalized_identifiers.add((normalized.source, normalized.value))
         return normalized_identifiers, invalid
+
+    @staticmethod
+    def _ambiguous_identifier_source(
+        left: set[tuple[OfficialIdentifierSource, str]],
+        right: set[tuple[OfficialIdentifierSource, str]],
+    ) -> OfficialIdentifierSource | None:
+        """Detect multiple identifiers from one source within either record."""
+        for source in OfficialIdentifierSource:
+            left_values = {
+                value for item_source, value in left if item_source is source
+            }
+            right_values = {
+                value for item_source, value in right if item_source is source
+            }
+            if len(left_values) > 1 or len(right_values) > 1:
+                return source
+        return None
 
     @staticmethod
     def _conflicting_identifier_source(

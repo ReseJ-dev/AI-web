@@ -159,9 +159,11 @@ bundled Public Suffix List snapshot without network access. Company names are
 case-, punctuation-, whitespace-, and common legal-suffix-insensitive.
 
 Merge decisions select values by confidence, retain losing values as
-alternatives, combine evidence URLs, retain both source record IDs, and include
-the complete resolution and merge explanation. Conflicting official IDs keep
-records separate; malformed official IDs require manual review.
+alternatives, preserve every distinct evidence URL (including audit-relevant
+fragments), retain both source record IDs, and include the complete resolution
+and merge explanation. Official-identifier URLs must use the authoritative
+Wikidata or OpenCorporates host. Conflicting IDs keep records separate, while
+malformed or internally contradictory official IDs require manual review.
 
 ## Relevance scoring
 

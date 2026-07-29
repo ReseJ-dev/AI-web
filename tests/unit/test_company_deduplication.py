@@ -65,7 +65,8 @@ def test_normalizes_company_urls_and_internationalized_domains() -> None:
     """Scheme, www, ports, tracking, fragments, and IDNs normalize together."""
     normalized = normalize_company_url(
         "HTTP://WWW.BÜCHER.DE:80/services/?utm_source=newsletter"
-        "&b=2&fbclid=secret&a=1#team"
+        "&b=2&fbclid=secret&a=1&srsltid=search&hsCtaTracking=cta"
+        "&mkt_tok=mail#team"
     )
 
     assert normalized == "https://xn--bcher-kva.de/services?a=1&b=2"
@@ -86,6 +87,10 @@ def test_uses_public_suffix_rules_for_registrable_domains_offline() -> None:
         ("ACME GmbH", "acme"),
         ("A&B Solutions, LLC", "a and b solutions"),
         ("Société Élan S.A.R.L.", "société élan"),
+        ("Voorbeeld B.V.B.A.", "voorbeeld"),
+        ("Nordic Studio A/S", "nordic studio"),
+        ("Tallinn Digital OÜ", "tallinn digital"),
+        ("Comercio S.L.U.", "comercio"),
     ],
 )
 def test_normalizes_company_names_and_legal_suffixes(
@@ -205,6 +210,47 @@ def test_shared_official_identifier_merges(
     assert any("Shared official identifier" in item for item in result.explanation)
 
 
+def test_normalizes_official_opencorporates_api_identifier_url() -> None:
+    """The official versioned API URL normalizes to jurisdiction and number."""
+    normalized = normalize_official_identifier(
+        OfficialIdentifier(
+            source=OfficialIdentifierSource.OPENCORPORATES,
+            value="https://api.opencorporates.com/v0.4/companies/NL/12345678",
+        )
+    )
+
+    assert normalized.value == "nl/12345678"
+
+
+@pytest.mark.parametrize(
+    "identifier",
+    [
+        OfficialIdentifier(
+            source=OfficialIdentifierSource.WIKIDATA,
+            value="https://example.com/wiki/Q123",
+        ),
+        OfficialIdentifier(
+            source=OfficialIdentifierSource.OPENCORPORATES,
+            value="https://example.com/companies/nl/12345678",
+        ),
+        OfficialIdentifier(
+            source=OfficialIdentifierSource.OPENCORPORATES,
+            value="nl/",
+        ),
+        OfficialIdentifier(
+            source=OfficialIdentifierSource.OPENCORPORATES,
+            value="nl/123/extra",
+        ),
+    ],
+)
+def test_official_identifiers_require_authoritative_shape_and_host(
+    identifier: OfficialIdentifier,
+) -> None:
+    """Lookalike URLs and incomplete registry keys cannot establish identity."""
+    with pytest.raises(ValueError):
+        normalize_official_identifier(identifier)
+
+
 def test_conflicting_official_identifiers_prevent_domain_merge() -> None:
     """Different authoritative IDs override an otherwise matching domain."""
     left = CompanyEntity(
@@ -231,6 +277,30 @@ def test_conflicting_official_identifiers_prevent_domain_merge() -> None:
     assert result.outcome is EntityResolutionOutcome.KEEP_SEPARATE
     assert result.confidence == 0.99
     assert "separate official entities" in result.explanation[0]
+
+
+def test_multiple_identifiers_from_one_source_require_manual_review() -> None:
+    """Internally contradictory authority data fails closed before domain matching."""
+    left = CompanyEntity(
+        record=_company("Example", "https://example.com/"),
+        official_identifiers=[
+            OfficialIdentifier(
+                source=OfficialIdentifierSource.WIKIDATA,
+                value="Q100",
+            ),
+            OfficialIdentifier(
+                source=OfficialIdentifierSource.WIKIDATA,
+                value="Q200",
+            ),
+        ],
+    )
+    right = _company("Example", "https://www.example.com/")
+
+    result = CompanyDeduplicationService().resolve(left, right)
+
+    assert result.outcome is EntityResolutionOutcome.MANUAL_REVIEW_REQUIRED
+    assert result.merged_company is None
+    assert "Multiple wikidata identifiers" in result.explanation[0]
 
 
 def test_identifiers_can_be_read_from_extracted_fields() -> None:
@@ -347,6 +417,51 @@ def test_merge_keeps_highest_confidence_and_all_provenance() -> None:
     assert len(category.evidence) == 2
     assert metadata.explanation[-1].startswith("Merged record")
     assert result.explanation[0] in metadata.explanation
+
+
+def test_merge_metadata_preserves_distinct_evidence_url_variants() -> None:
+    """Fragments and tracking-bearing citations remain available for audit."""
+    left = _company(
+        "Example Commerce",
+        "https://example.com/",
+        fields=[
+            _field(
+                "services",
+                ["Commerce"],
+                0.8,
+                "https://example.com/services?utm_source=search#commerce",
+            )
+        ],
+    )
+    right = _company(
+        "Example Commerce B.V.",
+        "https://www.example.com/",
+        fields=[
+            _field(
+                "services",
+                ["Commerce"],
+                0.9,
+                "https://example.com/services?utm_source=partner#platform",
+            )
+        ],
+    )
+
+    result = CompanyDeduplicationService().resolve(left, right)
+
+    assert result.outcome is EntityResolutionOutcome.MERGE
+    assert result.merge_metadata is not None
+    evidence_urls = {str(url) for url in result.merge_metadata.evidence_urls}
+    assert {
+        "https://example.com/services?utm_source=search#commerce",
+        "https://example.com/services?utm_source=partner#platform",
+    } <= evidence_urls
+    assert result.merged_company is not None
+    services = next(
+        field
+        for field in result.merged_company.extracted_fields
+        if field.name == "services"
+    )
+    assert len(services.evidence) == 2
 
 
 def test_rejects_unsafe_thresholds_and_malformed_identifiers() -> None:
