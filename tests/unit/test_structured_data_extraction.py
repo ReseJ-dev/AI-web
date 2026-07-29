@@ -20,6 +20,7 @@ from app.models import (
 from app.providers import (
     FakeLLMProvider,
     LLMProvider,
+    LLMProviderResponseError,
     resolve_llm_provider,
 )
 from app.services import (
@@ -366,6 +367,176 @@ async def test_llm_gets_only_clean_text_urls_and_returns_strict_facts() -> None:
 
 
 @pytest.mark.anyio
+async def test_llm_retries_invalid_json_then_accepts_strict_response() -> None:
+    """Malformed model output gets one bounded schema-repair attempt."""
+    delays: list[float] = []
+    provider = FakeLLMProvider(
+        "not-an-object",
+        additional_responses=[
+            {
+                "fields": [
+                    {
+                        "name": "company_name",
+                        "value": "Example Commerce",
+                        "evidence_urls": ["https://example.com/"],
+                        "basis": "explicit",
+                    }
+                ]
+            }
+        ],
+    )
+
+    async def record_sleep(delay: float) -> None:
+        delays.append(delay)
+
+    result = await LLMCompanyExtractor(
+        provider,
+        max_response_retries=1,
+        retry_backoff_seconds=0.25,
+        sleep=record_sleep,
+    ).extract([_page()])
+
+    assert result.status is ExtractionStatus.ACCEPTED
+    assert result.field("company_name").value == "Example Commerce"  # type: ignore[union-attr]
+    assert len(provider.calls) == 2
+    assert delays == [0.25]
+    assert "previous response was malformed" in provider.calls[1].instructions
+
+
+@pytest.mark.anyio
+async def test_llm_retries_provider_invalid_json_error() -> None:
+    """Provider JSON decoding failures use the same repair retry budget."""
+    provider = FakeLLMProvider(
+        LLMProviderResponseError("invalid JSON"),
+        additional_responses=[{"fields": []}],
+    )
+
+    result = await LLMCompanyExtractor(
+        provider,
+        max_response_retries=1,
+        retry_backoff_seconds=0,
+    ).extract([_page()])
+
+    assert len(provider.calls) == 2
+    assert result.status is ExtractionStatus.REJECTED
+    assert "company_name" in result.rejection_reasons[0]
+
+
+@pytest.mark.anyio
+async def test_llm_input_has_an_aggregate_clean_text_limit() -> None:
+    """Multiple clean pages cannot exceed the configured aggregate budget."""
+    provider = FakeLLMProvider({"fields": []})
+    first = _page(main_text="A" * 800)
+    second_text = "B" * 800
+    second = _page(
+        source_url="https://example.com/about",
+        main_text=second_text,
+    ).model_copy(
+        update={
+            "canonical_url": "https://example.com/about",
+            "extracted_text_length": len(second_text),
+        }
+    )
+
+    await LLMCompanyExtractor(
+        provider,
+        max_input_chars=1_000,
+        max_response_retries=0,
+    ).extract([first, second])
+
+    sent = provider.calls[0].pages
+    assert sum(len(page.cleaned_text) for page in sent) <= 1_000
+    assert sent[0].cleaned_text == "A" * 800
+    assert sent[1].cleaned_text == "B" * 200
+    serialized = provider.calls[0].model_dump_json()
+    assert "organization_data" not in serialized
+    assert "meta_description" not in serialized
+
+
+@pytest.mark.anyio
+async def test_llm_rejects_hallucinated_explicit_fields() -> None:
+    """A valid evidence URL cannot support a value absent from clean text."""
+    provider = FakeLLMProvider(
+        {
+            "fields": [
+                {
+                    "name": "company_name",
+                    "value": "Hallucinated Labs",
+                    "evidence_urls": ["https://example.com/"],
+                    "basis": "explicit",
+                },
+                {
+                    "name": "country",
+                    "value": "Belgium",
+                    "evidence_urls": ["https://example.com/"],
+                    "basis": "explicit",
+                },
+                {
+                    "name": "services",
+                    "value": ["Machine learning consulting"],
+                    "evidence_urls": ["https://example.com/"],
+                    "basis": "explicit",
+                },
+            ]
+        }
+    )
+
+    result = await LLMCompanyExtractor(
+        provider,
+        max_response_retries=0,
+    ).extract(
+        [_page()],
+        [RequestedField(name="country"), RequestedField(name="services")],
+    )
+
+    assert result.status is ExtractionStatus.REJECTED
+    assert result.field("company_name").value is None  # type: ignore[union-attr]
+    assert result.field("country").value is None  # type: ignore[union-attr]
+    assert result.field("services").value is None  # type: ignore[union-attr]
+    assert (
+        sum(
+            "absent from its cited clean text" in reason
+            for reason in result.rejection_reasons
+        )
+        == 3
+    )
+
+
+@pytest.mark.anyio
+async def test_llm_rejects_unsupported_summary_claims() -> None:
+    """An original-sounding summary still fails when its facts are unsupported."""
+    provider = FakeLLMProvider(
+        {
+            "fields": [
+                {
+                    "name": "company_name",
+                    "value": "Example Commerce",
+                    "evidence_urls": ["https://example.com/"],
+                    "basis": "explicit",
+                },
+                {
+                    "name": "summary",
+                    "value": (
+                        "Example Commerce won international awards and "
+                        "employs 900 engineers."
+                    ),
+                    "evidence_urls": ["https://example.com/"],
+                    "basis": "inference",
+                },
+            ]
+        }
+    )
+
+    result = await LLMCompanyExtractor(
+        provider,
+        max_response_retries=0,
+    ).extract([_page()])
+
+    assert result.field("summary").value is None  # type: ignore[union-attr]
+    assert any("numeric fact absent" in reason for reason in result.rejection_reasons)
+
+
+@pytest.mark.anyio
 async def test_llm_rejects_missing_and_foreign_evidence() -> None:
     """A required fact cannot survive without evidence from a supplied page."""
     missing = FakeLLMProvider(
@@ -516,7 +687,9 @@ async def test_composite_runs_deterministic_first_and_preserves_its_facts() -> N
                 },
                 {
                     "name": "summary",
-                    "value": "An original supported summary.",
+                    "value": (
+                        "Example Commerce provides strategy and development services."
+                    ),
                     "evidence_urls": ["https://example.com/"],
                     "basis": "inference",
                 },
@@ -534,7 +707,41 @@ async def test_composite_runs_deterministic_first_and_preserves_its_facts() -> N
     assert calls == ["deterministic", "llm"]
     assert result.status is ExtractionStatus.ACCEPTED
     assert result.field("company_name").value == "Example Commerce B.V."  # type: ignore[union-attr]
-    assert result.field("summary").value == "An original supported summary."  # type: ignore[union-attr]
+    assert result.field("summary").value == (  # type: ignore[union-attr]
+        "Example Commerce provides strategy and development services."
+    )
+
+
+@pytest.mark.anyio
+async def test_composite_keeps_deterministic_value_on_llm_conflict() -> None:
+    """Conflicting model data cannot replace a deterministic supported fact."""
+    page = _page(
+        main_text=(
+            "Example Commerce\nWrong Commerce\nOur services\n"
+            "Strategy, development and optimization"
+        )
+    )
+    provider = FakeLLMProvider(
+        {
+            "fields": [
+                {
+                    "name": "company_name",
+                    "value": "Wrong Commerce",
+                    "evidence_urls": ["https://example.com/"],
+                    "basis": "explicit",
+                }
+            ]
+        }
+    )
+    composite = CompositeCompanyExtractor(
+        DeterministicCompanyExtractor(),
+        LLMCompanyExtractor(provider, max_response_retries=0),
+    )
+
+    result = await composite.extract([page])
+
+    assert result.status is ExtractionStatus.ACCEPTED
+    assert result.field("company_name").value == "Example Commerce B.V."  # type: ignore[union-attr]
 
 
 def test_environment_selects_llm_provider(

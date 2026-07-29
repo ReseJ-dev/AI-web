@@ -17,6 +17,10 @@ def test_settings_load_from_environment(monkeypatch: pytest.MonkeyPatch) -> None
     monkeypatch.setenv("SEARCH_RESULT_RETENTION_ALLOWED", "true")
     monkeypatch.setenv("LLM_PROVIDER", "fake")
     monkeypatch.setenv("LLM_MODEL", "test-company-model")
+    monkeypatch.setenv("LLM_API_URL", "https://llm.example/extract")
+    monkeypatch.setenv("LLM_API_KEY", "llm-secret")
+    monkeypatch.setenv("LLM_RESPONSE_MAX_RETRIES", "1")
+    monkeypatch.setenv("LLM_MAX_INPUT_CHARS", "40000")
     monkeypatch.setenv("CRAWLER_REQUEST_DELAY_SECONDS", "0.25")
     monkeypatch.setenv("CRAWLER_MAX_RESPONSE_BYTES", "500000")
     monkeypatch.setenv("CRAWLER_TIMEOUT_SECONDS", "8")
@@ -33,6 +37,11 @@ def test_settings_load_from_environment(monkeypatch: pytest.MonkeyPatch) -> None
     assert settings.search_result_retention_allowed is True
     assert settings.llm_provider == "fake"
     assert settings.llm_model == "test-company-model"
+    assert settings.llm_api_url == "https://llm.example/extract"
+    assert settings.llm_api_key is not None
+    assert settings.llm_api_key.get_secret_value() == "llm-secret"
+    assert settings.llm_response_max_retries == 1
+    assert settings.llm_max_input_chars == 40_000
     assert settings.crawler_request_delay_seconds == 0.25
     assert settings.crawler_max_response_bytes == 500_000
     assert settings.crawler_timeout_seconds == 8

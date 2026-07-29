@@ -26,9 +26,12 @@ from app.providers.crawling import WebsiteCrawler
 from app.providers.enrichment import CompanyEnrichmentProvider
 from app.providers.fake_llm import FakeLLMProvider
 from app.providers.fake_search import FakeSearchProvider, SearchCall
+from app.providers.http_llm import ConfigurableHttpLLMProvider
 from app.providers.llm import (
     LLMProvider,
     LLMProviderConfigurationError,
+    LLMProviderError,
+    LLMProviderResponseError,
     resolve_llm_provider,
 )
 from app.providers.search import SearchProvider
@@ -37,6 +40,7 @@ __all__ = [
     "AsyncWebsiteCrawler",
     "BraveSearchProvider",
     "CompanyEnrichmentProvider",
+    "ConfigurableHttpLLMProvider",
     "CrawlBlockedError",
     "CrawlComplianceError",
     "CrawlContentTypeError",
@@ -49,6 +53,8 @@ __all__ = [
     "FakeSearchProvider",
     "LLMProvider",
     "LLMProviderConfigurationError",
+    "LLMProviderError",
+    "LLMProviderResponseError",
     "SearchAuthenticationError",
     "SearchAuthorizationError",
     "SearchCall",

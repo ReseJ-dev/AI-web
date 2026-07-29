@@ -97,6 +97,44 @@ class Settings(BaseSettings):
         max_length=200,
         validation_alias="LLM_MODEL",
     )
+    llm_api_url: str | None = Field(
+        default=None,
+        validation_alias="LLM_API_URL",
+    )
+    llm_api_key: SecretStr | None = Field(
+        default=None,
+        validation_alias="LLM_API_KEY",
+    )
+    llm_timeout_seconds: float = Field(
+        default=30.0,
+        gt=0,
+        le=120,
+        validation_alias="LLM_TIMEOUT_SECONDS",
+    )
+    llm_http_max_retries: int = Field(
+        default=2,
+        ge=0,
+        le=5,
+        validation_alias="LLM_HTTP_MAX_RETRIES",
+    )
+    llm_response_max_retries: int = Field(
+        default=2,
+        ge=0,
+        le=5,
+        validation_alias="LLM_RESPONSE_MAX_RETRIES",
+    )
+    llm_retry_backoff_seconds: float = Field(
+        default=0.5,
+        ge=0,
+        le=30,
+        validation_alias="LLM_RETRY_BACKOFF_SECONDS",
+    )
+    llm_max_input_chars: int = Field(
+        default=60_000,
+        ge=1_000,
+        le=200_000,
+        validation_alias="LLM_MAX_INPUT_CHARS",
+    )
     research_search_budget: int = Field(
         default=20,
         ge=1,

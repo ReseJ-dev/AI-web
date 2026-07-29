@@ -1,8 +1,9 @@
 """Evidence-based deterministic, LLM, and composite company extraction."""
 
+import asyncio
 import json
 import re
-from collections.abc import Callable, Iterable, Sequence
+from collections.abc import Awaitable, Callable, Iterable, Sequence
 from dataclasses import dataclass
 from typing import Protocol, cast, runtime_checkable
 from urllib.parse import urlsplit, urlunsplit
@@ -25,7 +26,7 @@ from app.models import (
     TextBlockKind,
 )
 from app.models.domain import normalize_field_name
-from app.providers.llm import LLMProvider
+from app.providers.llm import LLMProvider, LLMProviderResponseError
 
 _CORE_FIELDS = (
     "company_name",
@@ -133,6 +134,31 @@ _COUNTRY_MARKERS = (
     ("frankrijk", "France"),
     ("france", "France"),
 )
+_SUMMARY_STOPWORDS = frozenset(
+    {
+        "a",
+        "an",
+        "and",
+        "are",
+        "as",
+        "at",
+        "based",
+        "by",
+        "company",
+        "for",
+        "from",
+        "in",
+        "is",
+        "of",
+        "on",
+        "provides",
+        "the",
+        "their",
+        "to",
+        "with",
+    }
+)
+_WORD_TOKEN = re.compile(r"[^\W_]+", re.UNICODE)
 
 _LLM_INSTRUCTIONS = """
 Extract only the requested company fields from the supplied cleaned website text.
@@ -395,6 +421,89 @@ def _explicit_value_is_present(
     return bool(strings) and all(value.casefold() in cited_text for value in strings)
 
 
+def _cited_text(
+    field: SupportedField,
+    pages_by_url: dict[str, ExtractedPageContent],
+) -> str:
+    """Join only the clean text from pages explicitly cited by a field."""
+    return "\n".join(
+        pages_by_url[str(url)].main_text
+        for url in field.evidence_urls
+        if str(url) in pages_by_url
+    )
+
+
+def _content_tokens(value: str) -> list[str]:
+    """Return normalized non-stopword tokens for grounding checks."""
+    return [
+        token
+        for token in _WORD_TOKEN.findall(value.casefold())
+        if token not in _SUMMARY_STOPWORDS and len(token) > 1
+    ]
+
+
+def _summary_rejection(
+    field: SupportedField,
+    pages_by_url: dict[str, ExtractedPageContent],
+) -> str | None:
+    """Reject copied or weakly grounded model-written summaries."""
+    if not isinstance(field.value, str):
+        return "Summary must be a string or null."
+    if field.basis is not FactBasis.INFERENCE:
+        return "Summary must be marked as an inference from supported facts."
+    cited = _cited_text(field, pages_by_url)
+    if not cited.strip():
+        return "Summary has no cited clean source text."
+    normalized_summary = " ".join(field.value.casefold().split())
+    normalized_cited = " ".join(cited.casefold().split())
+    if len(field.value) >= 160 and normalized_summary in normalized_cited:
+        return "Summary copies a long website passage instead of being original."
+    summary_numbers = {
+        token for token in _WORD_TOKEN.findall(field.value) if token.isdigit()
+    }
+    cited_numbers = {token for token in _WORD_TOKEN.findall(cited) if token.isdigit()}
+    if not summary_numbers.issubset(cited_numbers):
+        return "Summary contains a numeric fact absent from its cited evidence."
+    summary_tokens = _content_tokens(field.value)
+    cited_tokens = set(_content_tokens(cited))
+    if summary_tokens:
+        supported = sum(token in cited_tokens for token in summary_tokens)
+        if supported / len(summary_tokens) < 0.6:
+            return "Summary contains claims weakly grounded in its cited evidence."
+    return None
+
+
+def _inference_is_grounded(
+    field: SupportedField,
+    pages_by_url: dict[str, ExtractedPageContent],
+) -> bool:
+    """Require conservative lexical support for non-summary inferred values."""
+    cited_tokens = set(_content_tokens(_cited_text(field, pages_by_url)))
+    values = field.value if isinstance(field.value, list) else [field.value]
+    value_tokens = [
+        token
+        for value in values
+        if isinstance(value, str)
+        for token in _content_tokens(value)
+    ]
+    return bool(value_tokens) and (
+        sum(token in cited_tokens for token in value_tokens) / len(value_tokens) >= 0.6
+    )
+
+
+def _json_string_values(value: JsonValue) -> list[str]:
+    """Collect all string leaves from a structured model field."""
+    if isinstance(value, str):
+        return [value]
+    if isinstance(value, list):
+        return [string for item in value for string in _json_string_values(item)]
+    if isinstance(value, dict):
+        return [
+            string for item in value.values() for string in _json_string_values(item)
+        ]
+    return []
+
+
 def _llm_field_rejection(
     field: SupportedField,
     pages_by_url: dict[str, ExtractedPageContent],
@@ -404,6 +513,15 @@ def _llm_field_rejection(
         return f"Field {field.name!r} cites a URL that was not supplied."
     if field.value is None:
         return None
+    if any(
+        _contains_personal_contact(value) for value in _json_string_values(field.value)
+    ):
+        return f"Field {field.name!r} contains personal contact data."
+    if (
+        field.extraction_method is not None
+        and field.extraction_method is not ExtractionMethod.LLM
+    ):
+        return f"Field {field.name!r} claims a non-LLM extraction method."
     if field.name in _EXPLICIT_ONLY_FIELDS and field.basis is not FactBasis.EXPLICIT:
         return f"Field {field.name!r} may not be inferred."
     if field.name in {"website_url", "contact_page_url"}:
@@ -415,16 +533,13 @@ def _llm_field_rejection(
         and not _explicit_value_is_present(field, pages_by_url)
     ):
         return f"Explicit field {field.name!r} is absent from its cited clean text."
-    if (
-        field.name == "summary"
-        and isinstance(field.value, str)
-        and len(field.value) >= 160
-        and any(
-            field.value.casefold() in pages_by_url[str(url)].main_text.casefold()
-            for url in field.evidence_urls
-        )
+    if field.name == "summary":
+        return _summary_rejection(field, pages_by_url)
+    if field.basis is FactBasis.INFERENCE and not _inference_is_grounded(
+        field,
+        pages_by_url,
     ):
-        return "Summary copies a long website passage instead of being original."
+        return f"Inferred field {field.name!r} is not grounded in cited evidence."
     return None
 
 
@@ -1125,9 +1240,66 @@ class LLMCompanyExtractor:
         provider: LLMProvider,
         *,
         model: str | None = None,
+        max_response_retries: int | None = None,
+        retry_backoff_seconds: float | None = None,
+        max_input_chars: int | None = None,
+        sleep: Callable[[float], Awaitable[None]] = asyncio.sleep,
     ) -> None:
+        settings = get_settings()
         self._provider = provider
-        self._model = model or get_settings().llm_model
+        self._model = model or settings.llm_model
+        self._max_response_retries = (
+            max_response_retries
+            if max_response_retries is not None
+            else settings.llm_response_max_retries
+        )
+        self._retry_backoff_seconds = (
+            retry_backoff_seconds
+            if retry_backoff_seconds is not None
+            else settings.llm_retry_backoff_seconds
+        )
+        self._max_input_chars = (
+            max_input_chars
+            if max_input_chars is not None
+            else settings.llm_max_input_chars
+        )
+        self._sleep = sleep
+        if not 0 <= self._max_response_retries <= 5:
+            raise ValueError("max_response_retries must be between 0 and 5")
+        if not 0 <= self._retry_backoff_seconds <= 30:
+            raise ValueError("retry_backoff_seconds must be between 0 and 30")
+        if not 1_000 <= self._max_input_chars <= 200_000:
+            raise ValueError("max_input_chars must be between 1000 and 200000")
+
+    def _bounded_pages(
+        self,
+        pages: Sequence[ExtractedPageContent],
+    ) -> list[LLMPageInput]:
+        """Bound aggregate clean content without exposing page metadata or HTML."""
+        inputs: list[LLMPageInput] = []
+        remaining = self._max_input_chars
+        for page in pages:
+            if remaining <= 0:
+                break
+            cleaned_text = page.main_text[:remaining]
+            if len(page.main_text) > remaining:
+                boundary = max(
+                    cleaned_text.rfind("\n"),
+                    cleaned_text.rfind(" "),
+                )
+                if boundary >= int(remaining * 0.8):
+                    cleaned_text = cleaned_text[:boundary]
+            cleaned_text = cleaned_text.rstrip()
+            if not cleaned_text:
+                continue
+            inputs.append(
+                LLMPageInput(
+                    source_url=page.source_url,
+                    cleaned_text=cleaned_text,
+                )
+            )
+            remaining -= len(cleaned_text)
+        return inputs
 
     async def extract(
         self,
@@ -1146,37 +1318,78 @@ class LLMCompanyExtractor:
                 required_fields=required_fields,
                 rejection_reasons=("At least one cleaned source page is required.",),
             )
+        bounded_pages = self._bounded_pages(pages)
+        if not bounded_pages:
+            return _finalize(
+                (),
+                requested_fields=requested_fields,
+                required_fields=required_fields,
+                rejection_reasons=(
+                    "At least one page must contain clean text for LLM extraction.",
+                ),
+            )
         request = LLMExtractionRequest(
             model=self._model,
             requested_fields=safe_names,
-            pages=[
-                LLMPageInput(
-                    source_url=page.source_url,
-                    cleaned_text=page.main_text,
-                )
-                for page in pages
-            ],
+            pages=bounded_pages,
             instructions=_LLM_INSTRUCTIONS,
         )
         schema = cast(dict[str, JsonValue], LLMCompanyResponse.model_json_schema())
-        raw_response = await self._provider.generate_structured(
-            request,
-            response_schema=schema,
-        )
-        try:
-            response = LLMCompanyResponse.model_validate(raw_response)
-        except ValidationError as error:
+        response: LLMCompanyResponse | None = None
+        last_schema_error = "unknown schema error"
+        active_request = request
+        for attempt in range(self._max_response_retries + 1):
+            try:
+                raw_response = await self._provider.generate_structured(
+                    active_request,
+                    response_schema=schema,
+                )
+                response = LLMCompanyResponse.model_validate(raw_response)
+                break
+            except (ValidationError, LLMProviderResponseError) as error:
+                if isinstance(error, ValidationError):
+                    last_schema_error = str(error.errors()[0]["msg"])
+                else:
+                    last_schema_error = str(error)
+                if attempt >= self._max_response_retries:
+                    break
+                await self._sleep(self._retry_backoff_seconds * (2**attempt))
+                active_request = request.model_copy(
+                    update={
+                        "instructions": (
+                            _LLM_INSTRUCTIONS
+                            + "\nThe previous response was malformed. Return "
+                            "only JSON matching the supplied schema; use null "
+                            "for every unsupported field."
+                        )
+                    }
+                )
+        if response is None:
             return _finalize(
                 (),
                 requested_fields=requested_fields,
                 required_fields=required_fields,
                 rejection_reasons=(
                     "LLM response did not match the strict extraction schema: "
-                    f"{error.errors()[0]['msg']}",
+                    f"{last_schema_error}",
                 ),
             )
 
-        pages_by_url = {str(page.source_url): page for page in pages}
+        bounded_text_by_url = {
+            str(page.source_url): page.cleaned_text for page in bounded_pages
+        }
+        pages_by_url = {
+            str(page.source_url): page.model_copy(
+                update={
+                    "main_text": bounded_text_by_url[str(page.source_url)],
+                    "extracted_text_length": len(
+                        bounded_text_by_url[str(page.source_url)]
+                    ),
+                }
+            )
+            for page in pages
+            if str(page.source_url) in bounded_text_by_url
+        }
         fields: list[SupportedField] = []
         reasons: list[str] = []
         for field in response.fields:
@@ -1220,6 +1433,12 @@ class CompositeCompanyExtractor:
             requested_fields,
             required_fields=(),
         )
+        if any(
+            reason.startswith("Conflicting authoritative")
+            or reason.startswith("Conflicting business contact")
+            for reason in deterministic.rejection_reasons
+        ):
+            return deterministic
         llm = await self._llm.extract(
             pages,
             requested_fields,

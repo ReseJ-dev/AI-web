@@ -134,9 +134,15 @@ LLM integrations receive only clean page text, source URLs, requested field
 names, and extraction instructions. Responses must match a strict Pydantic
 schema. Core company facts cannot be inferred, foreign evidence URLs and long
 copied summaries are rejected, and employee personal-data fields are never sent
-to the provider. Select a registered provider and model with `LLM_PROVIDER` and
-`LLM_MODEL`. This commit includes an in-memory fake provider; vendor adapters can
-be registered without changing extraction services.
+to the provider. `LLM_MAX_INPUT_CHARS` applies an aggregate input limit across
+all pages, and malformed model responses are retried according to
+`LLM_RESPONSE_MAX_RETRIES`.
+
+Select a provider and model with `LLM_PROVIDER` and `LLM_MODEL`. The built-in
+`http` provider sends a vendor-neutral structured request to `LLM_API_URL`,
+optionally authenticated by `LLM_API_KEY`, and retries transient failures.
+`FakeLLMProvider` provides deterministic response sequences for tests. Other
+vendor adapters can be registered without changing extraction services.
 
 ## Company deduplication
 
