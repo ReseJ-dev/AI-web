@@ -363,6 +363,30 @@ forms, execute JavaScript, authenticate, or attempt to bypass restrictions.
 `RESEARCH_CRAWL_PAGE_LIMIT` defaults each company crawl to five pages, while
 `CRAWLER_TIMEOUT_SECONDS` bounds individual requests.
 
+## Optional live website smoke tests
+
+Live tests are disabled by default and ordinary `pytest` or `make check` runs
+perform no live website requests. To opt in explicitly, run:
+
+```bash
+RUN_LIVE_WEBSITE_SMOKE_TESTS=true make test-live
+```
+
+Targets come from `config/live_smoke_domains.yaml`, but that file is only a
+candidate list: it never grants approval. Each target must also have an
+explicit `approved` decision in the source-policy configuration. The sample
+domains `askphill.com`, `opklopper.nl`, `shopmonkey.nl`, and `code.digital`
+remain in `manual_review_required` status, so even an opted-in run reports
+them as skipped until a reviewer approves them.
+
+For an approved target, the test checks `robots.txt` before every content
+request and fetches at most one page with a descriptive user agent, a
+one-second request delay, a 500 KB response limit, and bounded redirects. It
+does not parse or retain page text and stops safely on authentication errors,
+rate limits, CAPTCHA, Cloudflare, or other bot-protection responses. Run with
+`-ra` (included in `make test-live`) for the skipped-domain report. These
+checks are operational risk signals, not legal advice.
+
 ## Quality checks
 
 ```bash

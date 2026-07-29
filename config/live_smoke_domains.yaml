@@ -1,0 +1,16 @@
+# These sample domains remain in candidate/manual-review status. Setting the
+# live-test environment flag does not approve them. The live test intersects
+# this list with config/approved_domains.yaml and reports every other domain as
+# skipped until a reviewer explicitly approves it.
+requires_manual_approval: true
+user_agent: AIWebResearchPortfolio-LiveSmoke/0.1
+request_delay_seconds: 1
+timeout_seconds: 10
+maximum_response_bytes: 500000
+maximum_pages_per_domain: 1
+maximum_redirects: 2
+domains:
+  - askphill.com
+  - opklopper.nl
+  - shopmonkey.nl
+  - code.digital

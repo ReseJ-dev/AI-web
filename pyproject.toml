@@ -66,3 +66,6 @@ exclude = ["^\\.venv/"]
 addopts = "-ra --strict-config --strict-markers"
 testpaths = ["tests"]
 pythonpath = ["."]
+markers = [
+    "live: explicitly enabled tests that may access approved public websites",
+]

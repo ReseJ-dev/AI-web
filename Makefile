@@ -1,4 +1,4 @@
-.PHONY: install run-api run-ui migrate migration format lint typecheck test check
+.PHONY: install run-api run-ui migrate migration format lint typecheck test test-live check
 
 install:
 	python -m pip install -e ".[dev]"
@@ -28,5 +28,12 @@ typecheck:
 
 test:
 	pytest
+
+test-live:
+	@test "$$RUN_LIVE_WEBSITE_SMOKE_TESTS" = "true" || ( \
+		echo "Set RUN_LIVE_WEBSITE_SMOKE_TESTS=true explicitly to run live tests."; \
+		exit 1 \
+	)
+	pytest -m live -ra
 
 check: lint typecheck test
