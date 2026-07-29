@@ -26,6 +26,7 @@ class ResearchProgressStage(StrEnum):
     CHECKING_COMPLIANCE = "checking_compliance"
     CRAWLING = "crawling"
     EXTRACTING = "extracting"
+    ENRICHING = "enriching"
     DEDUPLICATING = "deduplicating"
     SCORING = "scoring"
     EXPORTING = "exporting"

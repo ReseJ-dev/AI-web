@@ -598,6 +598,17 @@ class ResearchOrchestrator:
 
         company = self._company_from_extraction(run, extraction)
         identifiers: list[OfficialIdentifier] = []
+        if self._enrichment_providers:
+            await self._emit(
+                events,
+                warnings,
+                ResearchProgressStage.ENRICHING,
+                f"Enriching {company.name!r} through "
+                f"{len(self._enrichment_providers)} configured provider(s).",
+                on_progress,
+                completed_items=0,
+                total_items=len(self._enrichment_providers),
+            )
         for provider in self._enrichment_providers:
             try:
                 enriched = await provider.enrich(company)

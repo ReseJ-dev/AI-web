@@ -225,7 +225,8 @@ for `GEONAMES_CACHE_TTL_SECONDS`. Set `GEONAMES_USERNAME` to an application
 account; the documented `demo` account is not used. Every geographic addition
 links to GeoNames and retains GeoNames attribution.
 
-Progress callbacks receive ordered events from `planning` through `completed`,
+Progress callbacks receive ordered pipeline events, including a distinct
+`enriching` stage for configured providers, followed by `completed`,
 `completed_with_warnings`, or `failed`. Candidate-level compliance, crawl,
 extraction, enrichment, persistence, and export failures are isolated and
 reported as warnings, so successful companies can still be returned and saved.

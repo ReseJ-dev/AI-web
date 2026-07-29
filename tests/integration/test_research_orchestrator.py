@@ -1,6 +1,7 @@
 """Mocked end-to-end coverage for the complete research workflow."""
 
 from collections.abc import Sequence
+from pathlib import Path
 from uuid import UUID
 
 import pytest
@@ -26,6 +27,13 @@ from app.models import (
 from app.services.research_orchestrator import ResearchOrchestrator
 from app.services.source_policy import SourcePolicyDecision, SourcePolicyResult
 from app.services.structured_data_extraction import DeterministicCompanyExtractor
+
+_FIXTURES = Path(__file__).parents[1] / "fixtures"
+_HOME_HTML = (_FIXTURES / "company_homepage_noisy.html").read_text(encoding="utf-8")
+_ABOUT_HTML = (_FIXTURES / "company_about_realistic.html").read_text(encoding="utf-8")
+_SERVICES_HTML = (_FIXTURES / "company_services_realistic.html").read_text(
+    encoding="utf-8"
+)
 
 
 class _SearchProvider:
@@ -105,48 +113,23 @@ class _WebsiteCrawler:
         number = int(host.removeprefix("company").split(".")[0])
         name = f"Company {number:02}"
         root = f"https://{host}/"
-        navigation = """
-            <nav>
-              <a href="/about">About</a>
-              <a href="/services">Services</a>
-              <a href="/contact">Contact</a>
-            </nav>
-        """
         pages = [
             CrawledPage(
                 url=root,
-                html=self._html(
+                html=_HOME_HTML.replace("Example Commerce", name).replace(
+                    "https://example.com/",
                     root,
-                    name,
-                    navigation,
-                    "<h1>Shopify Agency</h1><p>Shopify development services.</p>",
                 ),
             ),
             CrawledPage(
-                url=f"{root}about",
-                html=self._html(
-                    f"{root}about",
-                    name,
-                    navigation,
-                    "<h1>About us</h1><p>Based in the Netherlands.</p>",
-                ),
+                url=f"{root}over-ons",
+                html=_ABOUT_HTML.replace("Delta Commerce", name),
             ),
             CrawledPage(
                 url=f"{root}services",
-                html=self._html(
-                    f"{root}services",
-                    name,
-                    navigation,
-                    "<h1>Services</h1><p>Shopify development</p>",
-                ),
-            ),
-            CrawledPage(
-                url=f"{root}contact",
-                html=self._html(
-                    f"{root}contact",
-                    name,
-                    navigation,
-                    "<h1>Contact</h1><p>Contact our Shopify agency.</p>",
+                html=_SERVICES_HTML.replace("Northstar Digital", name).replace(
+                    "https://northstar.example",
+                    root.rstrip("/"),
                 ),
             ),
         ]
@@ -155,30 +138,6 @@ class _WebsiteCrawler:
             canonical_url=root,
             pages=pages,
         )
-
-    @staticmethod
-    def _html(url: str, name: str, navigation: str, body: str) -> str:
-        return f"""
-        <!doctype html>
-        <html>
-          <head>
-            <title>{name} | Shopify Agency</title>
-            <link rel="canonical" href="{url}">
-            <meta property="og:site_name" content="{name}">
-            <script type="application/ld+json">
-              {{
-                "@context": "https://schema.org",
-                "@type": "Organization",
-                "name": "{name}",
-                "url": "{url}",
-                "address": {{"addressCountry": "Netherlands"}},
-                "knowsAbout": ["Shopify development"]
-              }}
-            </script>
-          </head>
-          <body>{navigation}<main>{body}</main></body>
-        </html>
-        """
 
 
 class _EnrichmentProvider:
@@ -334,11 +293,31 @@ async def test_complete_thirty_result_workflow_is_resilient() -> None:
         ResearchProgressStage.CHECKING_COMPLIANCE,
         ResearchProgressStage.CRAWLING,
         ResearchProgressStage.EXTRACTING,
+        ResearchProgressStage.ENRICHING,
         ResearchProgressStage.DEDUPLICATING,
         ResearchProgressStage.SCORING,
         ResearchProgressStage.EXPORTING,
         ResearchProgressStage.COMPLETED_WITH_WARNINGS,
     } <= stages
+    first_stage_index = {
+        stage: next(
+            index for index, event in enumerate(result.events) if event.stage is stage
+        )
+        for stage in (
+            ResearchProgressStage.PLANNING,
+            ResearchProgressStage.SEARCHING,
+            ResearchProgressStage.VALIDATING,
+            ResearchProgressStage.CHECKING_COMPLIANCE,
+            ResearchProgressStage.CRAWLING,
+            ResearchProgressStage.EXTRACTING,
+            ResearchProgressStage.ENRICHING,
+            ResearchProgressStage.DEDUPLICATING,
+            ResearchProgressStage.SCORING,
+            ResearchProgressStage.EXPORTING,
+            ResearchProgressStage.COMPLETED_WITH_WARNINGS,
+        )
+    }
+    assert list(first_stage_index.values()) == sorted(first_stage_index.values())
     assert progress == result.events
     assert any("fixture crawl timeout" in warning for warning in result.warnings)
 
