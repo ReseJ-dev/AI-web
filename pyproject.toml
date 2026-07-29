@@ -27,6 +27,9 @@ dependencies = [
     "uvicorn[standard]>=0.34,<1.0",
 ]
 
+[project.scripts]
+domain-review = "app.cli.main:run"
+
 [project.optional-dependencies]
 dev = [
     "mypy>=1.14,<2.0",

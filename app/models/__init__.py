@@ -30,6 +30,12 @@ from app.models.domain import (
     ResearchRunStatus,
     SkippedSource,
 )
+from app.models.domain_review import (
+    DomainInspection,
+    DomainReviewRecord,
+    RedirectObservation,
+    ReviewDecision,
+)
 from app.models.entity_resolution import (
     CompanyEntity,
     EntityResolutionOutcome,
@@ -78,6 +84,8 @@ __all__ = [
     "ComponentScore",
     "CrawlResult",
     "CrawledPage",
+    "DomainInspection",
+    "DomainReviewRecord",
     "EnrichmentResult",
     "EntityResolutionOutcome",
     "EntityResolutionResult",
@@ -103,6 +111,7 @@ __all__ = [
     "PreflightDecision",
     "RankedCompanyRecord",
     "RankedPage",
+    "RedirectObservation",
     "RelevanceComponent",
     "RelevanceScoreBreakdown",
     "RelevanceScoreResult",
@@ -113,6 +122,7 @@ __all__ = [
     "ResearchRequest",
     "ResearchRun",
     "ResearchRunStatus",
+    "ReviewDecision",
     "RobotsPolicyRecord",
     "ScorePenalty",
     "SearchCandidate",

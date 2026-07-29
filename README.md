@@ -108,6 +108,32 @@ The demo requires strict compliance mode. Blocked or ambiguous websites are
 skipped; these automated controls are operational risk signals and do not
 provide legal advice.
 
+## Domain review CLI
+
+The `domain-review` command supports `list-domains`, `inspect-domain DOMAIN`,
+`approve-domain DOMAIN`, `reject-domain DOMAIN`, and
+`remove-domain-decision DOMAIN`. Inspection is read-only: it reports the
+normalized domain, effective source policy, robots result and snapshot hash,
+public terms candidates, automated-access risk signals, redirect behavior,
+proposed same-domain paths, and warnings.
+
+```bash
+domain-review inspect-domain agency.example
+domain-review approve-domain agency.example \
+  --reviewer reviewer@example.test \
+  --note "Reviewed the public robots and terms evidence."
+```
+
+Every mutation reruns inspection and requires the reviewer to type the exact
+action and normalized domain. Approval and rejection update exact-domain YAML
+rules and append reviewer, UTC timestamp, note, robots snapshot hash, and the
+first available terms URL to `config/domain_reviews.yaml`. Candidate-review
+entries remain manual-review-only until an explicit confirmed approval.
+Removing a decision restores the underlying candidate or unknown-domain policy.
+
+CLI inspection and human decisions are operational compliance controls, not
+legal advice.
+
 ## Source policies
 
 Source decisions are configured in `config/approved_domains.yaml`,

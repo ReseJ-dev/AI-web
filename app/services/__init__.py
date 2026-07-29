@@ -12,6 +12,13 @@ from app.services.domain_normalization import (
     InvalidDomainError,
     normalize_domain,
 )
+from app.services.domain_review import (
+    DomainReviewConflictError,
+    DomainReviewError,
+    DomainReviewEvidenceError,
+    DomainReviewInspectionService,
+    DomainReviewStore,
+)
 from app.services.html_content_extractor import HtmlContentExtractor
 from app.services.page_selection import PageSelectionService
 from app.services.query_planner import QueryPlanner
@@ -43,6 +50,11 @@ __all__ = [
     "CompliancePreflightService",
     "CompositeCompanyExtractor",
     "DeterministicCompanyExtractor",
+    "DomainReviewConflictError",
+    "DomainReviewError",
+    "DomainReviewEvidenceError",
+    "DomainReviewInspectionService",
+    "DomainReviewStore",
     "HtmlContentExtractor",
     "InvalidDomainError",
     "LLMCompanyExtractor",
