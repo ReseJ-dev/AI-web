@@ -91,6 +91,19 @@ language. Terms scanning is an advisory compliance signal, not legal advice;
 explicit or ambiguous language requires manual review. Terms signals never
 override a blocked domain or rejected target-path robots decision.
 
+## Page selection and content extraction
+
+`PageSelectionService` ranks same-domain company pages using URL paths, anchor
+text, titles, headings, and relevant platform or industry terms. It recognizes
+common English and Dutch about, services, solutions, expertise, and contact
+routes.
+
+`HtmlContentExtractor` processes supplied HTML locally; it performs no network
+requests. It preserves canonical, meta, Open Graph, and Organization JSON-LD
+metadata while removing executable, hidden, cookie, navigation, menu, and
+footer content. Clean visible text is deduplicated and limited by
+`HTML_CONTENT_MAX_CHARS` before it can be passed to a future LLM step.
+
 ## Quality checks
 
 ```bash

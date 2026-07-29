@@ -79,6 +79,12 @@ class Settings(BaseSettings):
         le=10,
         validation_alias="TERMS_MAX_DOCUMENTS",
     )
+    html_content_max_chars: int = Field(
+        default=20_000,
+        ge=1_000,
+        le=200_000,
+        validation_alias="HTML_CONTENT_MAX_CHARS",
+    )
 
 
 @lru_cache(maxsize=1)

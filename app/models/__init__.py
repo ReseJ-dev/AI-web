@@ -7,6 +7,13 @@ from app.models.compliance import (
     TermsLink,
     TermsPolicyResult,
 )
+from app.models.content import (
+    ExtractedPageContent,
+    NavigationLink,
+    PageCandidate,
+    PageCategory,
+    RankedPage,
+)
 from app.models.domain import (
     CompanyRecord,
     ComplianceDecision,
@@ -29,7 +36,12 @@ __all__ = [
     "ComplianceStatus",
     "Evidence",
     "ExtractedField",
+    "ExtractedPageContent",
+    "NavigationLink",
+    "PageCandidate",
+    "PageCategory",
     "PreflightDecision",
+    "RankedPage",
     "RelevanceScoreBreakdown",
     "RequestedField",
     "ResearchRequest",
