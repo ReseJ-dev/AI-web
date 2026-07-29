@@ -32,6 +32,10 @@ def test_settings_load_from_environment(monkeypatch: pytest.MonkeyPatch) -> None
     monkeypatch.setenv("WIKIDATA_TIMEOUT_SECONDS", "12")
     monkeypatch.setenv("GEONAMES_USERNAME", "geo-user")
     monkeypatch.setenv("GEONAMES_CACHE_TTL_SECONDS", "7200")
+    monkeypatch.setenv("GOOGLE_SERVICE_ACCOUNT_FILE", "/tmp/google-service.json")
+    monkeypatch.setenv("GOOGLE_SHEETS_SPREADSHEET_ID", "sheet-id")
+    monkeypatch.setenv("GOOGLE_SHEETS_CREATE_ALLOWED", "true")
+    monkeypatch.setenv("GOOGLE_SHEETS_MAX_RETRIES", "4")
 
     settings = Settings()
 
@@ -62,3 +66,22 @@ def test_settings_load_from_environment(monkeypatch: pytest.MonkeyPatch) -> None
     assert settings.geonames_username is not None
     assert settings.geonames_username.get_secret_value() == "geo-user"
     assert settings.geonames_cache_ttl_seconds == 7_200
+    assert settings.google_service_account_file == Path("/tmp/google-service.json")
+    assert settings.google_sheets_spreadsheet_id == "sheet-id"
+    assert settings.google_sheets_create_allowed is True
+    assert settings.google_sheets_max_retries == 4
+
+
+def test_blank_optional_google_settings_are_unset(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A copied environment template does not turn blank credentials into paths."""
+    monkeypatch.setenv("GOOGLE_SERVICE_ACCOUNT_FILE", "")
+    monkeypatch.setenv("GOOGLE_SERVICE_ACCOUNT_JSON", "")
+    monkeypatch.setenv("GOOGLE_SHEETS_SPREADSHEET_ID", "")
+
+    settings = Settings(_env_file=None)
+
+    assert settings.google_service_account_file is None
+    assert settings.google_service_account_json is None
+    assert settings.google_sheets_spreadsheet_id is None

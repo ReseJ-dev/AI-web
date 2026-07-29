@@ -14,6 +14,7 @@ from app.models import (
     CrawlResult,
     EnrichmentResult,
     ExportArtifact,
+    ExportContext,
     PreflightDecision,
     RankedCompanyRecord,
     ResearchProgressEvent,
@@ -208,7 +209,13 @@ class _CsvExporter(ResultExporter):
         self,
         run: ResearchRun,
         records: Sequence[RankedCompanyRecord],
+        *,
+        context: ExportContext | None = None,
     ) -> ExportArtifact:
+        assert context is not None
+        assert context.generated_queries
+        assert context.skipped_sources
+        assert context.providers
         self.record_count = len(records)
         return ExportArtifact(
             format_name=self.format_name,

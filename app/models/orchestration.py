@@ -116,6 +116,19 @@ class ExportArtifact(BaseModel):
     record_count: int = Field(ge=0)
 
 
+class ExportContext(UtcTimestampedModel):
+    """Run-level data required by full-fidelity result exporters."""
+
+    model_config = ConfigDict(extra="forbid", frozen=True)
+
+    skipped_sources: list[SkippedSource] = Field(default_factory=list)
+    generated_queries: list[str] = Field(default_factory=list)
+    providers: list[str] = Field(default_factory=list)
+    strict_compliance_mode: bool = True
+    warnings: list[str] = Field(default_factory=list)
+    completion_time: datetime = Field(default_factory=utc_now)
+
+
 class ResearchOrchestrationResult(BaseModel):
     """Final workflow outcome including partial records and audit events."""
 

@@ -19,6 +19,7 @@ from app.models import (
     EntityResolutionOutcome,
     Evidence,
     ExportArtifact,
+    ExportContext,
     ExtractedField,
     ExtractedPageContent,
     ExtractionStatus,
@@ -165,6 +166,7 @@ class ResearchOrchestrator:
             if crawl_page_limit is not None
             else settings.research_crawl_page_limit
         )
+        self._strict_compliance_mode = settings.robots_strict_mode
         if not 1 <= self._search_budget <= 50:
             raise ValueError("search_budget must be between 1 and 50")
         if not 1 <= self._search_page_size <= 20:
@@ -369,7 +371,20 @@ class ResearchOrchestrator:
                     )
                     continue
                 try:
-                    artifacts.append(await exporter.export(run, ranked_records))
+                    artifacts.append(
+                        await exporter.export(
+                            run,
+                            ranked_records,
+                            context=ExportContext(
+                                skipped_sources=skipped,
+                                generated_queries=queries,
+                                providers=self._configured_provider_names(),
+                                strict_compliance_mode=self._strict_compliance_mode,
+                                warnings=warnings,
+                                completion_time=utc_now(),
+                            ),
+                        )
+                    )
                 except Exception as error:
                     warnings.append(f"Exporter {format_name!r} failed: {error}.")
 
@@ -652,6 +667,28 @@ class ResearchOrchestrator:
                 official_identifiers=self._unique_identifiers(identifiers),
             ),
             extraction,
+        )
+
+    @staticmethod
+    def _provider_name(provider: object) -> str:
+        """Return a stable configured-provider name for export metadata."""
+        configured = getattr(provider, "provider_name", None)
+        if isinstance(configured, str) and configured.strip():
+            return configured.strip()
+        return type(provider).__name__
+
+    def _configured_provider_names(self) -> list[str]:
+        """List discovery, crawl, extraction, and optional enrichment providers."""
+        return list(
+            dict.fromkeys(
+                self._provider_name(provider)
+                for provider in (
+                    self._search_provider,
+                    self._crawler,
+                    self._structured_extractor,
+                    *self._enrichment_providers,
+                )
+            )
         )
 
     @staticmethod

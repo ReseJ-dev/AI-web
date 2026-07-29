@@ -5,7 +5,7 @@ agent. It includes source policy and robots preflight, transient search,
 company-page selection, clean HTML extraction, and evidence-based structured
 company extraction, deduplication, scoring, and resilient research
 orchestration. Concrete crawler, enrichment, and exporter adapters are injected
-at deployment time; Google Sheets integration is not implemented yet.
+at deployment time, including an official Google Sheets API exporter.
 
 ## Requirements
 
@@ -232,6 +232,29 @@ extraction, enrichment, persistence, and export failures are isolated and
 reported as warnings, so successful companies can still be returned and saved.
 `RESEARCH_SEARCH_PAGE_SIZE` and `RESEARCH_CRAWL_PAGE_LIMIT` bound provider and
 crawler work.
+
+## Google Sheets export
+
+`GoogleSheetsExporter` uses service-account OAuth and the official Google
+Sheets API. Configure exactly one of `GOOGLE_SERVICE_ACCOUNT_FILE` or
+`GOOGLE_SERVICE_ACCOUNT_JSON`. Set `GOOGLE_SHEETS_SPREADSHEET_ID` to update an
+existing spreadsheet that has been shared with the service-account email.
+Spreadsheet creation is disabled by default; omit the ID and set
+`GOOGLE_SHEETS_CREATE_ALLOWED=true` only when the service account is permitted
+to create a new spreadsheet.
+
+The exporter creates or reuses `Research Results`, `Skipped Sources`, and `Run
+Metadata` tabs. Values and formatting are sent with batch API calls, and quota
+or service failures use bounded exponential backoff. Headers are formatted,
+the first row is frozen, filters and wrapped text are enabled, and columns use
+content-appropriate widths.
+
+Only final structured values, evidence URLs, audit decisions, and run metadata
+are exported. Raw search responses, search snippets, evidence excerpts, and
+long copied page fragments are excluded. Cell text is bounded and
+formula-like prefixes are escaped. Register the exporter under
+`google_sheets` in the orchestrator's exporter mapping and request that format
+for a run.
 
 ## Safe website crawler
 

@@ -3,7 +3,7 @@
 from functools import lru_cache
 from pathlib import Path
 
-from pydantic import Field, SecretStr
+from pydantic import Field, SecretStr, field_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
@@ -259,6 +259,66 @@ class Settings(BaseSettings):
         le=2_592_000,
         validation_alias="GEONAMES_CACHE_TTL_SECONDS",
     )
+    google_service_account_file: Path | None = Field(
+        default=None,
+        validation_alias="GOOGLE_SERVICE_ACCOUNT_FILE",
+    )
+    google_service_account_json: SecretStr | None = Field(
+        default=None,
+        validation_alias="GOOGLE_SERVICE_ACCOUNT_JSON",
+    )
+    google_sheets_spreadsheet_id: str | None = Field(
+        default=None,
+        validation_alias="GOOGLE_SHEETS_SPREADSHEET_ID",
+    )
+    google_sheets_create_allowed: bool = Field(
+        default=False,
+        validation_alias="GOOGLE_SHEETS_CREATE_ALLOWED",
+    )
+    google_sheets_title: str = Field(
+        default="AI Web Research Results",
+        min_length=1,
+        max_length=200,
+        validation_alias="GOOGLE_SHEETS_TITLE",
+    )
+    google_sheets_timeout_seconds: float = Field(
+        default=20.0,
+        gt=0,
+        le=120,
+        validation_alias="GOOGLE_SHEETS_TIMEOUT_SECONDS",
+    )
+    google_sheets_max_retries: int = Field(
+        default=3,
+        ge=0,
+        le=10,
+        validation_alias="GOOGLE_SHEETS_MAX_RETRIES",
+    )
+    google_sheets_backoff_seconds: float = Field(
+        default=0.5,
+        ge=0,
+        le=30,
+        validation_alias="GOOGLE_SHEETS_BACKOFF_SECONDS",
+    )
+
+    @field_validator(
+        "google_service_account_file",
+        "google_sheets_spreadsheet_id",
+        mode="before",
+    )
+    @classmethod
+    def blank_google_values_are_unset(cls, value: object) -> object:
+        """Treat blank optional Google settings as absent."""
+        if isinstance(value, str) and not value.strip():
+            return None
+        return value
+
+    @field_validator("google_service_account_json", mode="before")
+    @classmethod
+    def blank_google_secret_is_unset(cls, value: object) -> object:
+        """Avoid treating an empty credential environment variable as a key."""
+        if isinstance(value, str) and not value.strip():
+            return None
+        return value
 
 
 @lru_cache(maxsize=1)

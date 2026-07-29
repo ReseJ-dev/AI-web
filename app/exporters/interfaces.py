@@ -4,7 +4,11 @@ from collections.abc import Sequence
 from typing import Protocol, runtime_checkable
 
 from app.models.domain import ResearchRun
-from app.models.orchestration import ExportArtifact, RankedCompanyRecord
+from app.models.orchestration import (
+    ExportArtifact,
+    ExportContext,
+    RankedCompanyRecord,
+)
 
 
 @runtime_checkable
@@ -17,6 +21,8 @@ class ResultExporter(Protocol):
         self,
         run: ResearchRun,
         records: Sequence[RankedCompanyRecord],
+        *,
+        context: ExportContext | None = None,
     ) -> ExportArtifact:
         """Export final ranked records and return an artifact reference."""
         ...
