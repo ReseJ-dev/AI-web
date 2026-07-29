@@ -22,6 +22,21 @@ class ExtractionStatus(StrEnum):
     REJECTED = "rejected"
 
 
+class ExtractionMethod(StrEnum):
+    """Deterministic or model-assisted method supporting a field."""
+
+    CANONICAL_URL = "canonical_url"
+    CONTACT_LINK = "contact_link"
+    HEADING = "heading"
+    JSON_LD_ORGANIZATION = "json_ld_organization"
+    META_DESCRIPTION = "meta_description"
+    OPEN_GRAPH = "open_graph"
+    PAGE_TITLE = "page_title"
+    SERVICE_SECTION = "service_section"
+    COMBINED_DETERMINISTIC = "combined_deterministic"
+    LLM = "llm"
+
+
 class SupportedField(BaseModel):
     """One nullable company field with source-level provenance."""
 
@@ -31,6 +46,9 @@ class SupportedField(BaseModel):
     value: JsonValue = None
     evidence_urls: list[HttpUrl] = Field(default_factory=list)
     basis: FactBasis | None = None
+    evidence_fragment: str | None = Field(default=None, max_length=500)
+    extraction_method: ExtractionMethod | None = None
+    confidence: float | None = Field(default=None, ge=0, le=1)
 
     @model_validator(mode="before")
     @classmethod
@@ -44,13 +62,33 @@ class SupportedField(BaseModel):
     def validate_support(self) -> Self:
         """Require evidence and a basis for values, and neither for nulls."""
         if self.value is None:
-            if self.evidence_urls or self.basis is not None:
-                raise ValueError("null fields must not claim evidence or a fact basis")
+            if (
+                self.evidence_urls
+                or self.basis is not None
+                or self.evidence_fragment is not None
+                or self.extraction_method is not None
+                or self.confidence is not None
+            ):
+                raise ValueError("null fields must not claim extraction provenance")
             return self
         if not self.evidence_urls:
             raise ValueError("non-null fields require at least one evidence URL")
         if self.basis is None:
             raise ValueError("non-null fields require an explicit or inference basis")
+        provenance = (
+            self.evidence_fragment,
+            self.extraction_method,
+            self.confidence,
+        )
+        if any(item is not None for item in provenance) and any(
+            item is None for item in provenance
+        ):
+            raise ValueError(
+                "field evidence fragment, extraction method, and confidence "
+                "must be supplied together"
+            )
+        if self.evidence_fragment is not None and not self.evidence_fragment.strip():
+            raise ValueError("field evidence fragments must not be blank")
         if isinstance(self.value, str):
             maximum = 1_000 if self.name == "summary" else 2_000
             if len(self.value) > maximum:

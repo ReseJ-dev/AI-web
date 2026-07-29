@@ -40,6 +40,7 @@ from app.models.entity_resolution import (
 )
 from app.models.extraction import (
     CompanyExtraction,
+    ExtractionMethod,
     ExtractionStatus,
     FactBasis,
     LLMCompanyResponse,
@@ -84,6 +85,7 @@ __all__ = [
     "ExtractedField",
     "ExtractedPageContent",
     "ExtractedTextBlock",
+    "ExtractionMethod",
     "ExtractionStatus",
     "FactBasis",
     "LLMCompanyResponse",

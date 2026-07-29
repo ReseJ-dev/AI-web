@@ -8,10 +8,14 @@ from app.core.settings import reload_settings
 from app.models import (
     CompanyExtraction,
     ExtractedPageContent,
+    ExtractedTextBlock,
+    ExtractionMethod,
     ExtractionStatus,
     FactBasis,
     NavigationLink,
     RequestedField,
+    ServiceSection,
+    TextBlockKind,
 )
 from app.providers import (
     FakeLLMProvider,
@@ -84,6 +88,9 @@ async def test_deterministic_extractor_uses_structured_and_page_signals() -> Non
     assert result.field("services").value == [  # type: ignore[union-attr]
         "Shopify development",
         "Commerce strategy",
+        "Strategy",
+        "development",
+        "optimization",
     ]
     assert result.field("country").value == "NL"  # type: ignore[union-attr]
     assert result.field("description").value == (  # type: ignore[union-attr]
@@ -97,6 +104,9 @@ async def test_deterministic_extractor_uses_structured_and_page_signals() -> Non
         assert field is not None
         assert [str(url) for url in field.evidence_urls] == ["https://example.com/"]
         assert field.basis is FactBasis.EXPLICIT
+        assert field.evidence_fragment
+        assert field.extraction_method is not None
+        assert field.confidence is not None
 
 
 @pytest.mark.anyio
@@ -124,6 +134,183 @@ async def test_deterministic_extractor_falls_back_to_title_and_service_section()
         "development",
         "optimization",
     ]
+
+
+@pytest.mark.anyio
+async def test_deterministic_complete_data_has_compact_provenance() -> None:
+    """Every complete deterministic fact carries method, fragment, URL, and score."""
+    page = _page().model_copy(
+        update={
+            "service_sections": [
+                ServiceSection(
+                    source_url="https://example.com/",
+                    heading="Our services",
+                    text_blocks=[
+                        ExtractedTextBlock(
+                            source_url="https://example.com/",
+                            text="Our services",
+                            kind=TextBlockKind.HEADING,
+                        ),
+                        ExtractedTextBlock(
+                            source_url="https://example.com/",
+                            text="Shopify Plus implementation",
+                            kind=TextBlockKind.HEADING,
+                        ),
+                    ],
+                )
+            ]
+        }
+    )
+
+    result = await DeterministicCompanyExtractor().extract(
+        [page],
+        [
+            RequestedField(name="country"),
+            RequestedField(name="services"),
+            RequestedField(name="description"),
+        ],
+    )
+
+    assert result.status is ExtractionStatus.ACCEPTED
+    expected = {
+        "company_name",
+        "website_url",
+        "country",
+        "services",
+        "contact_page_url",
+        "description",
+    }
+    for name in expected:
+        field = result.field(name)
+        assert field is not None
+        assert field.value is not None
+        assert [str(url) for url in field.evidence_urls] == ["https://example.com/"]
+        assert field.evidence_fragment
+        assert len(field.evidence_fragment) <= 500
+        assert field.extraction_method is not None
+        assert field.confidence is not None
+        assert 0 <= field.confidence <= 1
+    assert result.field("company_name").extraction_method is (  # type: ignore[union-attr]
+        ExtractionMethod.JSON_LD_ORGANIZATION
+    )
+    assert result.field("website_url").extraction_method is (  # type: ignore[union-attr]
+        ExtractionMethod.CANONICAL_URL
+    )
+    assert result.field("contact_page_url").value == (  # type: ignore[union-attr]
+        "https://example.com/contact"
+    )
+    assert "Shopify Plus implementation" in result.field("services").value  # type: ignore[operator,union-attr]
+
+
+@pytest.mark.anyio
+async def test_deterministic_partial_data_returns_null_without_guessing() -> None:
+    """A title can support identity while absent optional facts remain null."""
+    page = _page(main_text="Northstar Commerce").model_copy(
+        update={
+            "title": "Northstar Commerce | Home",
+            "open_graph": {},
+            "organization_data": [],
+            "headings": ["Welcome"],
+            "meta_description": None,
+            "contact_page_candidates": [],
+        }
+    )
+
+    result = await DeterministicCompanyExtractor().extract([page])
+
+    assert result.status is ExtractionStatus.ACCEPTED
+    assert result.field("company_name").value == "Northstar Commerce"  # type: ignore[union-attr]
+    assert result.field("company_name").extraction_method is (  # type: ignore[union-attr]
+        ExtractionMethod.PAGE_TITLE
+    )
+    assert result.field("website_url").value == "https://example.com/"  # type: ignore[union-attr]
+    for name in ("country", "services", "contact_page_url", "summary"):
+        field = result.field(name)
+        assert field is not None
+        assert field.value is None
+        assert field.evidence_urls == []
+        assert field.evidence_fragment is None
+        assert field.extraction_method is None
+        assert field.confidence is None
+
+
+@pytest.mark.anyio
+async def test_deterministic_conflicting_authoritative_names_are_rejected() -> None:
+    """Conflicting Organization names are surfaced rather than selected by order."""
+    page = _page().model_copy(
+        update={
+            "organization_data": [
+                {"@type": "Organization", "name": "Alpha Commerce"},
+                {"@type": "Organization", "name": "Beta Commerce"},
+            ],
+        }
+    )
+
+    result = await DeterministicCompanyExtractor().extract([page])
+
+    assert result.status is ExtractionStatus.REJECTED
+    assert result.field("company_name").value is None  # type: ignore[union-attr]
+    assert any(
+        "Conflicting authoritative values" in reason
+        for reason in result.rejection_reasons
+    )
+
+
+@pytest.mark.anyio
+async def test_deterministic_malformed_data_is_ignored_without_personal_data() -> None:
+    """Malformed metadata and personal contact details never become output facts."""
+    page = _page(
+        main_text=("Welcome\nJane Doe jane@example.com +31 6 12345678\nOur services")
+    ).model_copy(
+        update={
+            "title": "Welcome",
+            "open_graph": {
+                "og:title": "jane@example.com",
+                "og:url": "not a URL",
+            },
+            "organization_data": [
+                {
+                    "@type": "Organization",
+                    "name": ["Malformed Company"],
+                    "url": "javascript:alert(1)",
+                    "address": {"addressCountry": {"name": "NL"}},
+                    "knowsAbout": [
+                        "jane@example.com",
+                        "+31 6 12345678",
+                    ],
+                    "email": "jane@example.com",
+                    "telephone": "+31 6 12345678",
+                }
+            ],
+            "headings": ["Jane Doe", "Welcome", "Services"],
+            "meta_description": "Call Jane on +31 6 12345678",
+            "contact_page_candidates": [
+                NavigationLink(
+                    url="https://example.com/team/jane-contact",
+                    text="Contact Jane",
+                )
+            ],
+        }
+    )
+
+    result = await DeterministicCompanyExtractor().extract(
+        [page],
+        [
+            RequestedField(name="email"),
+            RequestedField(name="telephone"),
+        ],
+    )
+
+    assert result.status is ExtractionStatus.REJECTED
+    assert result.field("company_name").value is None  # type: ignore[union-attr]
+    assert result.field("services").value is None  # type: ignore[union-attr]
+    assert result.field("contact_page_url").value is None  # type: ignore[union-attr]
+    assert result.field("email").value is None  # type: ignore[union-attr]
+    assert result.field("telephone").value is None  # type: ignore[union-attr]
+    serialized = result.model_dump_json()
+    assert "jane@example.com" not in serialized
+    assert "+31 6 12345678" not in serialized
+    assert any("personal data" in reason for reason in result.rejection_reasons)
 
 
 @pytest.mark.anyio

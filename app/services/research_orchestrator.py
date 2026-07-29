@@ -766,7 +766,7 @@ class ResearchOrchestrator:
     def _to_extracted_field(field: SupportedField) -> ExtractedField:
         """Convert supported-field citations into persistence evidence."""
         value_text = json.dumps(field.value, ensure_ascii=False)
-        excerpt = (
+        excerpt = field.evidence_fragment or (
             f"Supported {field.name}: {value_text[:450]}"
             if value_text
             else f"Supported {field.name}."
@@ -774,7 +774,11 @@ class ResearchOrchestrator:
         return ExtractedField(
             name=field.name,
             value=field.value,
-            confidence=(0.95 if field.basis is FactBasis.EXPLICIT else 0.65),
+            confidence=(
+                field.confidence
+                if field.confidence is not None
+                else (0.95 if field.basis is FactBasis.EXPLICIT else 0.65)
+            ),
             evidence=[
                 Evidence(
                     urls=field.evidence_urls,

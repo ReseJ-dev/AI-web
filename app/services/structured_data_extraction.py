@@ -1,9 +1,11 @@
 """Evidence-based deterministic, LLM, and composite company extraction."""
 
+import json
 import re
-from collections.abc import Iterable, Sequence
+from collections.abc import Callable, Iterable, Sequence
+from dataclasses import dataclass
 from typing import Protocol, cast, runtime_checkable
-from urllib.parse import urlsplit
+from urllib.parse import urlsplit, urlunsplit
 
 from pydantic import JsonValue, ValidationError
 
@@ -11,13 +13,16 @@ from app.core.settings import get_settings
 from app.models import (
     CompanyExtraction,
     ExtractedPageContent,
+    ExtractionMethod,
     ExtractionStatus,
     FactBasis,
     LLMCompanyResponse,
     LLMExtractionRequest,
     LLMPageInput,
+    NavigationLink,
     RequestedField,
     SupportedField,
+    TextBlockKind,
 )
 from app.models.domain import normalize_field_name
 from app.providers.llm import LLMProvider
@@ -28,6 +33,7 @@ _CORE_FIELDS = (
     "summary",
     "services",
     "contact_page_url",
+    "country",
 )
 _PERSONAL_FIELD_MARKERS = (
     "employee",
@@ -39,6 +45,11 @@ _PERSONAL_FIELD_MARKERS = (
     "director",
     "personal_email",
     "personal_phone",
+    "contact_person",
+    "email",
+    "mobile",
+    "phone",
+    "telephone",
 )
 _EXPLICIT_ONLY_FIELDS = frozenset(
     {
@@ -62,6 +73,65 @@ _SERVICE_SPLIT = re.compile(r"\s*(?:,|;|\band\b|\ben\b)\s*", re.IGNORECASE)
 _SERVICE_PREFIX = re.compile(
     r"^.*?\b(?:include|includes|offer|offers|zijn|omvatten)\b\s*:?\s*",
     re.IGNORECASE,
+)
+_EMAIL = re.compile(r"\b[A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,}\b", re.IGNORECASE)
+_PHONE = re.compile(r"(?<!\w)(?:\+?\d[\d().\s-]{6,}\d)")
+_NON_ALPHANUMERIC = re.compile(r"[^\w]+", re.UNICODE)
+_GENERIC_HEADING_WORDS = frozenset(
+    {
+        "about",
+        "agency",
+        "commerce",
+        "company",
+        "contact",
+        "digital",
+        "ecommerce",
+        "expertise",
+        "home",
+        "services",
+        "solutions",
+        "specialists",
+        "welcome",
+    }
+)
+_BUSINESS_NAME_WORDS = frozenset(
+    {
+        "agency",
+        "bureau",
+        "bv",
+        "commerce",
+        "company",
+        "consulting",
+        "collective",
+        "corp",
+        "corporation",
+        "digital",
+        "group",
+        "inc",
+        "labs",
+        "llc",
+        "ltd",
+        "network",
+        "partners",
+        "studio",
+        "solutions",
+        "technologies",
+    }
+)
+_COUNTRY_MARKERS = (
+    ("the netherlands", "Netherlands"),
+    ("netherlands", "Netherlands"),
+    ("nederland", "Netherlands"),
+    ("united kingdom", "United Kingdom"),
+    ("great britain", "United Kingdom"),
+    ("united states", "United States"),
+    ("duitsland", "Germany"),
+    ("germany", "Germany"),
+    ("belgië", "Belgium"),
+    ("belgie", "Belgium"),
+    ("belgium", "Belgium"),
+    ("frankrijk", "France"),
+    ("france", "France"),
 )
 
 _LLM_INSTRUCTIONS = """
@@ -148,19 +218,145 @@ def _finalize(
     )
 
 
-def _field(
+@dataclass(frozen=True, slots=True)
+class _FieldCandidate:
+    """One deterministic value before conflict resolution."""
+
+    name: str
+    value: JsonValue
+    evidence_url: str
+    evidence_fragment: str
+    extraction_method: ExtractionMethod
+    confidence: float
+
+
+def _compact_fragment(value: object) -> str:
+    """Create compact evidence without retaining email addresses or phone numbers."""
+    if isinstance(value, str):
+        text = value
+    else:
+        text = json.dumps(value, ensure_ascii=False, separators=(",", ":"))
+    text = " ".join(text.split())
+    text = _EMAIL.sub("[email removed]", text)
+    text = _PHONE.sub("[phone removed]", text)
+    return text[:500].strip()
+
+
+def _contains_personal_contact(value: str) -> bool:
+    """Return whether text contains an email address or phone-like number."""
+    return bool(_EMAIL.search(value) or _PHONE.search(value))
+
+
+def _looks_like_person_name(value: str) -> bool:
+    """Conservatively reject short title-cased names lacking business markers."""
+    words = [word for word in value.split() if word]
+    normalized_words = {_NON_ALPHANUMERIC.sub("", word.casefold()) for word in words}
+    name_particles = {"de", "den", "der", "van", "von"}
+    return (
+        2 <= len(words) <= 4
+        and all(
+            (
+                word.casefold() in name_particles
+                or (word[:1].isupper() and word[1:].islower())
+            )
+            and word.isalpha()
+            for word in words
+        )
+        and not normalized_words.intersection(_BUSINESS_NAME_WORDS)
+    )
+
+
+def _plausible_unstructured_company_name(value: str) -> bool:
+    """Reject page labels, slogans, and likely people as fallback identities."""
+    words = [word for word in _NON_ALPHANUMERIC.split(value.casefold()) if word]
+    page_label_words = {
+        "about",
+        "contact",
+        "diensten",
+        "expertise",
+        "home",
+        "oplossingen",
+        "services",
+        "solutions",
+        "welcome",
+    }
+    if (
+        not words
+        or words[0] in page_label_words
+        or set(words).issubset(_GENERIC_HEADING_WORDS | {"our", "team", "we"})
+    ):
+        return False
+    return not (_contains_personal_contact(value) or _looks_like_person_name(value))
+
+
+def _candidate(
     name: str,
     value: JsonValue,
     page: ExtractedPageContent,
     *,
-    basis: FactBasis = FactBasis.EXPLICIT,
-) -> SupportedField:
-    """Create a supported field cited to the page that supplied it."""
-    return SupportedField(
+    fragment: object,
+    method: ExtractionMethod,
+    confidence: float,
+) -> _FieldCandidate:
+    """Create one sanitized deterministic extraction candidate."""
+    return _FieldCandidate(
         name=name,
         value=value,
-        evidence_urls=[page.source_url],
-        basis=basis,
+        evidence_url=str(page.source_url),
+        evidence_fragment=_compact_fragment(fragment),
+        extraction_method=method,
+        confidence=confidence,
+    )
+
+
+def _normalized_candidate_value(name: str, value: JsonValue) -> str:
+    """Return a stable field-aware conflict key."""
+    if isinstance(value, str):
+        compacted = " ".join(value.casefold().split())
+        if name in {"website_url", "contact_page_url"}:
+            parsed = urlsplit(compacted)
+            host = (parsed.hostname or "").removeprefix("www.")
+            path = parsed.path.rstrip("/") or "/"
+            return urlunsplit(("", host, path, parsed.query, ""))
+        if name == "country":
+            aliases = {
+                "nl": "netherlands",
+                "nederland": "netherlands",
+                "the netherlands": "netherlands",
+                "uk": "united kingdom",
+                "gb": "united kingdom",
+                "usa": "united states",
+                "us": "united states",
+            }
+            return aliases.get(compacted, compacted)
+        if name == "company_name":
+            return _NON_ALPHANUMERIC.sub("", compacted)
+        return compacted
+    return json.dumps(value, ensure_ascii=False, sort_keys=True)
+
+
+def _supported_candidate(
+    candidate: _FieldCandidate,
+    *,
+    evidence_urls: Sequence[str] | None = None,
+    evidence_fragment: str | None = None,
+    method: ExtractionMethod | None = None,
+    confidence: float | None = None,
+    value: JsonValue | None = None,
+) -> SupportedField:
+    """Convert a resolved deterministic candidate into a supported field."""
+    return SupportedField(
+        name=candidate.name,
+        value=candidate.value if value is None else value,
+        evidence_urls=list(evidence_urls or [candidate.evidence_url]),
+        basis=FactBasis.EXPLICIT,
+        evidence_fragment=(
+            evidence_fragment
+            if evidence_fragment is not None
+            else candidate.evidence_fragment
+        ),
+        extraction_method=method or candidate.extraction_method,
+        confidence=(confidence if confidence is not None else candidate.confidence),
     )
 
 
@@ -264,6 +460,7 @@ def _string_list(value: JsonValue | None) -> list[str]:
             isinstance(item, str)
             and (text := " ".join(item.split()))
             and len(text) <= 300
+            and not _contains_personal_contact(text)
             and text.casefold() not in {existing.casefold() for existing in normalized}
         ):
             normalized.append(text)
@@ -281,6 +478,103 @@ def _title_company_name(page: ExtractedPageContent) -> str | None:
     if not candidate or candidate.casefold() in {"home", "homepage", "welcome"}:
         return None
     return candidate[:300]
+
+
+def _heading_company_name(page: ExtractedPageContent) -> str | None:
+    """Return a conservative organization-like heading rather than a slogan."""
+    for heading in page.headings:
+        candidate = " ".join(heading.split())
+        words = {word for word in _NON_ALPHANUMERIC.split(candidate.casefold()) if word}
+        if (
+            1 <= len(words) <= 8
+            and len(candidate) <= 300
+            and words.difference(_GENERIC_HEADING_WORDS)
+            and _plausible_unstructured_company_name(candidate)
+            and (len(words) == 1 or bool(words.intersection(_BUSINESS_NAME_WORDS)))
+        ):
+            return candidate
+    return None
+
+
+def _country_from_text(value: str) -> str | None:
+    """Return only an explicitly named country from compact website text."""
+    normalized = f" {' '.join(value.casefold().split())} "
+    for marker, country in _COUNTRY_MARKERS:
+        if re.search(rf"(?<!\w){re.escape(marker)}(?!\w)", normalized):
+            return country
+    return None
+
+
+def _public_contact_candidate(
+    page: ExtractedPageContent,
+) -> NavigationLink | None:
+    """Return a same-domain public business contact page, never personal data."""
+    excluded_segments = {
+        "account",
+        "employee",
+        "login",
+        "people",
+        "person",
+        "profile",
+        "staff",
+        "team",
+    }
+    for link in page.contact_page_candidates:
+        if not _same_company_domain(
+            str(page.canonical_url),
+            str(link.url),
+        ):
+            continue
+        parsed = urlsplit(str(link.url))
+        segments = {
+            segment.casefold()
+            for segment in parsed.path.strip("/").split("/")
+            if segment
+        }
+        label_and_path = f"{link.text} {parsed.path}".casefold().replace("-", " ")
+        if segments.intersection(excluded_segments):
+            continue
+        if any(
+            marker in label_and_path
+            for marker in (
+                "contact",
+                "get in touch",
+                "contacteer",
+                "contactgegevens",
+            )
+        ):
+            return link
+    return None
+
+
+def _structured_service_values(page: ExtractedPageContent) -> list[str]:
+    """Extract concise service names from structured service sections."""
+    services: list[str] = []
+    generic_headings = {
+        "capabilities",
+        "diensten",
+        "expertise",
+        "oplossingen",
+        "our services",
+        "services",
+        "solutions",
+        "what we do",
+    }
+    for section in page.service_sections:
+        for block in section.text_blocks:
+            if block.kind not in {
+                TextBlockKind.HEADING,
+                TextBlockKind.LIST_ITEM,
+            }:
+                continue
+            value = " ".join(block.text.split()).strip(" .:")
+            if (
+                1 < len(value) <= 100
+                and value.casefold() not in generic_headings
+                and value.casefold() not in {service.casefold() for service in services}
+            ):
+                services.append(value)
+    return services[:20]
 
 
 def _service_section_values(page: ExtractedPageContent) -> list[str]:
@@ -310,6 +604,214 @@ def _service_section_values(page: ExtractedPageContent) -> list[str]:
     return services[:20]
 
 
+def _combine_fragments(candidates: Sequence[_FieldCandidate]) -> str:
+    """Combine unique compact fragments without exceeding the schema bound."""
+    fragments = list(
+        dict.fromkeys(
+            candidate.evidence_fragment
+            for candidate in candidates
+            if candidate.evidence_fragment
+        )
+    )
+    return _compact_fragment(" | ".join(fragments))
+
+
+def _resolve_services(
+    candidates: Sequence[_FieldCandidate],
+) -> SupportedField | None:
+    """Union supported service names across structured deterministic sources."""
+    values: list[str] = []
+    contributing: list[_FieldCandidate] = []
+    for candidate in sorted(candidates, key=lambda item: -item.confidence):
+        candidate_values = _string_list(candidate.value)
+        added = False
+        for value in candidate_values:
+            if value.casefold() not in {item.casefold() for item in values}:
+                values.append(value)
+                added = True
+        if added:
+            contributing.append(candidate)
+    if not values or not contributing:
+        return None
+    methods = {candidate.extraction_method for candidate in contributing}
+    method = (
+        next(iter(methods))
+        if len(methods) == 1
+        else ExtractionMethod.COMBINED_DETERMINISTIC
+    )
+    evidence_urls = list(
+        dict.fromkeys(candidate.evidence_url for candidate in contributing)
+    )
+    confidence = min(
+        0.99,
+        max(candidate.confidence for candidate in contributing)
+        + (0.01 if len(evidence_urls) > 1 else 0),
+    )
+    return _supported_candidate(
+        contributing[0],
+        value=cast(JsonValue, values[:20]),
+        evidence_urls=evidence_urls,
+        evidence_fragment=_combine_fragments(contributing),
+        method=method,
+        confidence=confidence,
+    )
+
+
+def _resolve_website(
+    candidates: Sequence[_FieldCandidate],
+) -> tuple[SupportedField | None, str | None]:
+    """Prefer a root canonical URL while rejecting authoritative domain conflicts."""
+    ordered = sorted(candidates, key=lambda item: -item.confidence)
+    if not ordered:
+        return None, None
+    top = ordered[0].confidence
+    authoritative = [
+        candidate for candidate in ordered if candidate.confidence >= top - 0.02
+    ]
+    domains = {
+        (urlsplit(str(candidate.value)).hostname or "").casefold().removeprefix("www.")
+        for candidate in authoritative
+        if isinstance(candidate.value, str)
+    }
+    if len(domains) > 1:
+        return None, "Conflicting authoritative canonical website domains."
+    chosen = min(
+        authoritative,
+        key=lambda candidate: (
+            len(urlsplit(str(candidate.value)).path.strip("/")),
+            len(str(candidate.value)),
+        ),
+    )
+    matching = [
+        candidate
+        for candidate in authoritative
+        if _normalized_candidate_value("website_url", candidate.value)
+        == _normalized_candidate_value("website_url", chosen.value)
+    ]
+    return (
+        _supported_candidate(
+            chosen,
+            evidence_urls=list(
+                dict.fromkeys(candidate.evidence_url for candidate in matching)
+            ),
+            evidence_fragment=_combine_fragments(matching),
+            confidence=min(0.99, chosen.confidence + 0.01 * (len(matching) > 1)),
+        ),
+        None,
+    )
+
+
+def _resolve_contact(
+    candidates: Sequence[_FieldCandidate],
+) -> tuple[SupportedField | None, str | None]:
+    """Choose one public business contact page without merging domains."""
+    ordered = sorted(candidates, key=lambda item: -item.confidence)
+    domains = {
+        (urlsplit(str(candidate.value)).hostname or "").casefold().removeprefix("www.")
+        for candidate in ordered
+        if isinstance(candidate.value, str)
+    }
+    if len(domains) > 1:
+        return None, "Conflicting business contact-page domains."
+    chosen = min(
+        ordered,
+        key=lambda candidate: (
+            len(urlsplit(str(candidate.value)).path.strip("/").split("/")),
+            len(str(candidate.value)),
+        ),
+    )
+    matching = [
+        candidate
+        for candidate in ordered
+        if _normalized_candidate_value("contact_page_url", candidate.value)
+        == _normalized_candidate_value("contact_page_url", chosen.value)
+    ]
+    return (
+        _supported_candidate(
+            chosen,
+            evidence_urls=list(
+                dict.fromkeys(candidate.evidence_url for candidate in matching)
+            ),
+            evidence_fragment=_combine_fragments(matching),
+            confidence=min(0.99, chosen.confidence + 0.01 * (len(matching) > 1)),
+        ),
+        None,
+    )
+
+
+def _resolve_candidates(
+    candidates_by_name: dict[str, list[_FieldCandidate]],
+) -> tuple[list[SupportedField], list[str]]:
+    """Resolve deterministic candidates by authority and report true conflicts."""
+    fields: list[SupportedField] = []
+    conflicts: list[str] = []
+    for name, candidates in candidates_by_name.items():
+        if not candidates:
+            continue
+        if name == "services":
+            if field := _resolve_services(candidates):
+                fields.append(field)
+            continue
+        if name == "website_url":
+            field, conflict = _resolve_website(candidates)
+            if field is not None:
+                fields.append(field)
+            if conflict is not None:
+                conflicts.append(conflict)
+            continue
+        if name == "contact_page_url":
+            field, conflict = _resolve_contact(candidates)
+            if field is not None:
+                fields.append(field)
+            if conflict is not None:
+                conflicts.append(conflict)
+            continue
+
+        ordered = sorted(candidates, key=lambda item: -item.confidence)
+        top = ordered[0].confidence
+        authoritative = [
+            candidate for candidate in ordered if candidate.confidence >= top - 0.02
+        ]
+        keys = {
+            _normalized_candidate_value(name, candidate.value)
+            for candidate in authoritative
+        }
+        if len(keys) > 1:
+            conflicts.append(
+                f"Conflicting authoritative values were found for {name!r}."
+            )
+            continue
+        chosen = authoritative[0]
+        matching = [
+            candidate
+            for candidate in ordered
+            if _normalized_candidate_value(name, candidate.value)
+            == _normalized_candidate_value(name, chosen.value)
+        ]
+        methods = {candidate.extraction_method for candidate in matching}
+        method = (
+            chosen.extraction_method
+            if len(methods) == 1
+            else ExtractionMethod.COMBINED_DETERMINISTIC
+        )
+        evidence_urls = list(
+            dict.fromkeys(candidate.evidence_url for candidate in matching)
+        )
+        fields.append(
+            _supported_candidate(
+                chosen,
+                evidence_urls=evidence_urls,
+                evidence_fragment=_combine_fragments(matching),
+                method=method,
+                confidence=min(
+                    0.99,
+                    chosen.confidence + 0.01 * (len(evidence_urls) > 1),
+                ),
+            )
+        )
+    return fields, conflicts
+
+
 class DeterministicCompanyExtractor:
     """Extract explicit company facts without model calls or guessing."""
 
@@ -321,35 +823,52 @@ class DeterministicCompanyExtractor:
         required_fields: Iterable[str] = (),
     ) -> CompanyExtraction:
         """Inspect structured metadata and cleaned company-page signals."""
-        fields: dict[str, SupportedField] = {}
+        candidates: dict[str, list[_FieldCandidate]] = {}
+
+        def add(candidate: _FieldCandidate) -> None:
+            candidates.setdefault(candidate.name, []).append(candidate)
+
         for page in pages:
-            fields.setdefault(
-                "website_url",
-                _field("website_url", str(page.canonical_url), page),
+            add(
+                _candidate(
+                    "website_url",
+                    str(page.canonical_url),
+                    page,
+                    fragment=f"Canonical URL: {page.canonical_url}",
+                    method=ExtractionMethod.CANONICAL_URL,
+                    confidence=0.98,
+                )
             )
-            contact = next(
-                (
-                    candidate
-                    for candidate in page.contact_page_candidates
-                    if _same_company_domain(
-                        str(page.canonical_url),
-                        str(candidate.url),
-                    )
-                ),
-                None,
-            )
+            contact = _public_contact_candidate(page)
             if contact is not None:
-                fields.setdefault(
-                    "contact_page_url",
-                    _field("contact_page_url", str(contact.url), page),
+                add(
+                    _candidate(
+                        "contact_page_url",
+                        str(contact.url),
+                        page,
+                        fragment=f"{contact.text}: {contact.url}",
+                        method=ExtractionMethod.CONTACT_LINK,
+                        confidence=0.96,
+                    )
                 )
 
             for organization in page.organization_data:
                 name = _direct_json_value(organization, "name", "legalName")
-                if isinstance(name, str) and name.strip():
-                    fields.setdefault(
-                        "company_name",
-                        _field("company_name", name.strip()[:300], page),
+                if (
+                    isinstance(name, str)
+                    and (compact_name := " ".join(name.split()))
+                    and len(compact_name) <= 300
+                    and not _contains_personal_contact(compact_name)
+                ):
+                    add(
+                        _candidate(
+                            "company_name",
+                            compact_name,
+                            page,
+                            fragment=f"Organization name: {compact_name}",
+                            method=ExtractionMethod.JSON_LD_ORGANIZATION,
+                            confidence=0.98,
+                        )
                     )
                 services = _string_list(
                     _json_value(
@@ -361,46 +880,209 @@ class DeterministicCompanyExtractor:
                     )
                 )
                 if services:
-                    fields.setdefault(
-                        "services",
-                        _field("services", cast(JsonValue, services), page),
+                    add(
+                        _candidate(
+                            "services",
+                            cast(JsonValue, services),
+                            page,
+                            fragment={"Organization services": services},
+                            method=ExtractionMethod.JSON_LD_ORGANIZATION,
+                            confidence=0.95,
+                        )
                     )
-                self._requested_json_ld_fields(
-                    fields,
+                country = _json_value(
+                    organization,
+                    "addressCountry",
+                    "country",
+                )
+                if isinstance(country, str) and (country := " ".join(country.split())):
+                    add(
+                        _candidate(
+                            "country",
+                            country[:200],
+                            page,
+                            fragment=f"Organization country: {country[:200]}",
+                            method=ExtractionMethod.JSON_LD_ORGANIZATION,
+                            confidence=0.96,
+                        )
+                    )
+                organization_url = _direct_json_value(organization, "url")
+                if isinstance(organization_url, str):
+                    try:
+                        parsed_organization_url = urlsplit(organization_url)
+                        if (
+                            parsed_organization_url.scheme in {"http", "https"}
+                            and parsed_organization_url.hostname is not None
+                        ):
+                            add(
+                                _candidate(
+                                    "website_url",
+                                    organization_url,
+                                    page,
+                                    fragment=(f"Organization URL: {organization_url}"),
+                                    method=(ExtractionMethod.JSON_LD_ORGANIZATION),
+                                    confidence=0.95,
+                                )
+                            )
+                    except ValueError:
+                        pass
+                self._requested_json_ld_candidates(
+                    add,
                     organization,
                     page,
                     requested_fields,
                 )
 
-            if "company_name" not in fields and (
-                title_name := _title_company_name(page)
+            site_name = page.open_graph.get("og:site_name")
+            if (
+                site_name
+                and len(site_name) <= 300
+                and _plausible_unstructured_company_name(site_name)
             ):
-                fields["company_name"] = _field("company_name", title_name, page)
-            if "services" not in fields and (
-                service_values := _service_section_values(page)
-            ):
-                fields["services"] = _field(
-                    "services",
-                    cast(JsonValue, service_values),
-                    page,
+                add(
+                    _candidate(
+                        "company_name",
+                        site_name,
+                        page,
+                        fragment=f"Open Graph site name: {site_name}",
+                        method=ExtractionMethod.OPEN_GRAPH,
+                        confidence=0.9,
+                    )
                 )
+            open_graph_title = page.open_graph.get("og:title")
+            if open_graph_title and not _contains_personal_contact(open_graph_title):
+                open_graph_name = _TITLE_SEPARATOR.split(
+                    open_graph_title,
+                    maxsplit=1,
+                )[0].strip()
+                if (
+                    open_graph_name
+                    and len(open_graph_name) <= 300
+                    and _plausible_unstructured_company_name(open_graph_name)
+                ):
+                    add(
+                        _candidate(
+                            "company_name",
+                            open_graph_name,
+                            page,
+                            fragment=f"Open Graph title: {open_graph_title}",
+                            method=ExtractionMethod.OPEN_GRAPH,
+                            confidence=0.84,
+                        )
+                    )
+            open_graph_url = page.open_graph.get("og:url")
+            if open_graph_url:
+                try:
+                    parsed_open_graph_url = urlsplit(open_graph_url)
+                    if (
+                        parsed_open_graph_url.scheme in {"http", "https"}
+                        and parsed_open_graph_url.hostname is not None
+                    ):
+                        add(
+                            _candidate(
+                                "website_url",
+                                open_graph_url,
+                                page,
+                                fragment=f"Open Graph URL: {open_graph_url}",
+                                method=ExtractionMethod.OPEN_GRAPH,
+                                confidence=0.93,
+                            )
+                        )
+                except ValueError:
+                    pass
+
+            if (title_name := _title_company_name(page)) and (
+                _plausible_unstructured_company_name(title_name)
+            ):
+                add(
+                    _candidate(
+                        "company_name",
+                        title_name,
+                        page,
+                        fragment=f"Page title: {page.title}",
+                        method=ExtractionMethod.PAGE_TITLE,
+                        confidence=0.78,
+                    )
+                )
+            if heading_name := _heading_company_name(page):
+                add(
+                    _candidate(
+                        "company_name",
+                        heading_name,
+                        page,
+                        fragment=f"Page heading: {heading_name}",
+                        method=ExtractionMethod.HEADING,
+                        confidence=0.7,
+                    )
+                )
+
+            service_values = _structured_service_values(page)
+            if not service_values:
+                service_values = _service_section_values(page)
+            if service_values:
+                add(
+                    _candidate(
+                        "services",
+                        cast(JsonValue, service_values),
+                        page,
+                        fragment={"Service section": service_values},
+                        method=ExtractionMethod.SERVICE_SECTION,
+                        confidence=0.88,
+                    )
+                )
+
             if page.meta_description and any(
                 field.name == "description" for field in requested_fields
             ):
-                fields.setdefault(
-                    "description",
-                    _field("description", page.meta_description, page),
+                safe_description = _compact_fragment(page.meta_description)
+                add(
+                    _candidate(
+                        "description",
+                        safe_description,
+                        page,
+                        fragment=safe_description,
+                        method=ExtractionMethod.META_DESCRIPTION,
+                        confidence=0.86,
+                    )
                 )
+            country_texts = [
+                page.meta_description or "",
+                page.open_graph.get("og:description", ""),
+                *page.headings,
+            ]
+            for country_text in country_texts:
+                if country := _country_from_text(country_text):
+                    method = (
+                        ExtractionMethod.META_DESCRIPTION
+                        if country_text == page.meta_description
+                        else (
+                            ExtractionMethod.OPEN_GRAPH
+                            if country_text == page.open_graph.get("og:description", "")
+                            else ExtractionMethod.HEADING
+                        )
+                    )
+                    add(
+                        _candidate(
+                            "country",
+                            country,
+                            page,
+                            fragment=country_text,
+                            method=method,
+                            confidence=0.76,
+                        )
+                    )
 
+        fields, conflicts = _resolve_candidates(candidates)
         return _finalize(
-            fields.values(),
+            fields,
             requested_fields=requested_fields,
             required_fields=required_fields,
+            rejection_reasons=conflicts,
         )
 
     @staticmethod
-    def _requested_json_ld_fields(
-        fields: dict[str, SupportedField],
+    def _requested_json_ld_candidates(
+        add: Callable[[_FieldCandidate], None],
         organization: dict[str, JsonValue],
         page: ExtractedPageContent,
         requested_fields: Sequence[RequestedField],
@@ -412,17 +1094,26 @@ class DeterministicCompanyExtractor:
             "website_url": ("url",),
         }
         for requested in requested_fields:
-            if requested.name in fields or _is_personal_field(requested.name):
+            if _is_personal_field(requested.name):
                 continue
             value = _json_value(
                 organization,
                 *(aliases.get(requested.name, (requested.name,))),
             )
             if value is not None and not isinstance(value, (dict, list)):
-                fields[requested.name] = _field(
-                    requested.name,
-                    value,
-                    page,
+                if isinstance(value, str) and _contains_personal_contact(value):
+                    continue
+                add(
+                    _candidate(
+                        requested.name,
+                        value,
+                        page,
+                        fragment={
+                            f"Organization {requested.name}": value,
+                        },
+                        method=ExtractionMethod.JSON_LD_ORGANIZATION,
+                        confidence=0.9,
+                    )
                 )
 
 

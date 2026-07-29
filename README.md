@@ -121,6 +121,15 @@ facts and uses model output only to fill unsupported fields. Every non-null
 field records whether it is explicit or inferred and cites its evidence URLs;
 required fields without evidence reject the extraction.
 
+`DeterministicCompanyExtractor` resolves company name, canonical website,
+possible country, services, and a public business contact-page URL from
+Organization JSON-LD, canonical metadata, titles, meta and Open Graph values,
+headings, and service sections. Each deterministic value carries a compact
+sanitized evidence fragment, extraction method, confidence, and source URL.
+Equally authoritative conflicts are rejected rather than selected by page
+order. Employee fields, person-like page identities, email addresses, phone
+numbers, and personal profile contact links are excluded.
+
 LLM integrations receive only clean page text, source URLs, requested field
 names, and extraction instructions. Responses must match a strict Pydantic
 schema. Core company facts cannot be inferred, foreign evidence URLs and long
