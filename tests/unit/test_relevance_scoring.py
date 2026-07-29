@@ -143,13 +143,11 @@ def test_medium_candidate_gets_partial_inference_and_completeness_points() -> No
         requested_fields=_requested(),
     )
 
-    assert result.total_score == 71.33
+    assert result.total_score == 71
     assert result.components[RelevanceComponent.LOCATION_MATCH].score == 5
     assert result.components[RelevanceComponent.CONTACT_PAGE].score == 0
     assert result.components[RelevanceComponent.EVIDENCE_QUALITY].score == 8
-    assert (
-        result.components[RelevanceComponent.REQUESTED_FIELD_COMPLETENESS].score == 3.33
-    )
+    assert result.components[RelevanceComponent.REQUESTED_FIELD_COMPLETENESS].score == 3
     penalty_components = {
         penalty.component for penalty in result.missing_evidence_penalties
     }
@@ -289,6 +287,7 @@ def test_contradictory_and_weak_fields_reduce_evidence_quality() -> None:
 
     evidence = result.components[RelevanceComponent.EVIDENCE_QUALITY]
     assert evidence.score == 4
+    assert result.components[RelevanceComponent.LOCATION_MATCH].score == 10
     assert "Contradictory values" in evidence.explanation
     assert "Weak or uncited" in evidence.explanation
     evidence_penalty = next(
@@ -335,3 +334,144 @@ def test_model_proposed_numerical_score_is_ignored() -> None:
 
     assert proposed_result.total_score == ordinary_result.total_score
     assert proposed_result.components == ordinary_result.components
+
+
+def test_scores_and_penalties_are_integer_points() -> None:
+    """Partial completeness uses deterministic half-up integer allocation."""
+    extraction = _extraction(
+        [
+            _supported("company_name", "Integer Co", "https://integer.example/"),
+            _supported("services", ["Shopify"], "https://integer.example/services"),
+            SupportedField(name="country", value=None),
+        ]
+    )
+
+    result = RelevanceScoringService().score(
+        _company(name="Integer Co", website_url="https://integer.example/"),
+        extraction,
+        topic=TOPIC,
+        location=LOCATION,
+        requested_fields=[
+            RequestedField(name="services"),
+            RequestedField(name="country"),
+        ],
+    )
+
+    assert isinstance(result.total_score, int)
+    assert all(
+        isinstance(component.score, int) for component in result.components.values()
+    )
+    assert all(
+        isinstance(penalty.points, int) for penalty in result.missing_evidence_penalties
+    )
+    assert (
+        sum(penalty.points for penalty in result.missing_evidence_penalties)
+        == 100 - result.total_score
+    )
+    payload = result.model_dump(mode="json")
+    assert "country_match" in payload["components"]
+    assert "location_match" not in payload["components"]
+    assert result.components[RelevanceComponent.REQUESTED_FIELD_COMPLETENESS].score == 3
+
+
+def test_evidence_quality_collapses_tracking_and_fragment_variants() -> None:
+    """Variants of one document cannot manufacture source diversity points."""
+    extraction = _extraction(
+        [
+            _supported(
+                "company_name",
+                "One Source",
+                "https://example.com/about?utm_source=search#identity",
+            ),
+            _supported(
+                "summary",
+                "A supported company.",
+                "https://example.com/about?fbclid=campaign#summary",
+            ),
+        ]
+    )
+
+    result = RelevanceScoringService().score(
+        _company(name="One Source"),
+        extraction,
+        topic=TOPIC,
+        location=LOCATION,
+    )
+
+    evidence = result.components[RelevanceComponent.EVIDENCE_QUALITY]
+    assert evidence.score == 8
+    assert "1 unique URL(s)" in evidence.explanation
+
+
+def test_semantically_equivalent_values_are_not_contradictions() -> None:
+    """Casing, whitespace, and list order do not create false conflicts."""
+    company = _company(
+        extracted_fields=[
+            ExtractedField(
+                name="country",
+                value="Netherlands",
+                confidence=0.9,
+                evidence=[
+                    Evidence(
+                        urls=["https://example.com/about"],
+                        excerpt="Netherlands",
+                    )
+                ],
+            ),
+            ExtractedField(
+                name="country",
+                value="  NETHERLANDS ",
+                confidence=0.9,
+                evidence=[
+                    Evidence(
+                        urls=["https://example.com/legal"],
+                        excerpt="NETHERLANDS",
+                    )
+                ],
+            ),
+            ExtractedField(
+                name="services",
+                value=["Shopify", "Strategy"],
+                confidence=0.9,
+                evidence=[
+                    Evidence(
+                        urls=["https://example.com/services"],
+                        excerpt="Shopify and strategy",
+                    )
+                ],
+            ),
+            ExtractedField(
+                name="services",
+                value=["strategy", "shopify"],
+                confidence=0.9,
+                evidence=[
+                    Evidence(
+                        urls=["https://example.com/work"],
+                        excerpt="Strategy and Shopify",
+                    )
+                ],
+            ),
+        ]
+    )
+    extraction = _extraction(
+        [
+            _supported(
+                "services",
+                ["Shopify development"],
+                "https://example.com/services",
+            ),
+            _supported("country", "Netherlands", "https://example.com/about"),
+        ]
+    )
+
+    result = RelevanceScoringService().score(
+        company,
+        extraction,
+        topic=TOPIC,
+        location=LOCATION,
+    )
+
+    assert result.components[RelevanceComponent.LOCATION_MATCH].score == 20
+    evidence = result.components[RelevanceComponent.EVIDENCE_QUALITY]
+    assert evidence.score == 10
+    assert "Contradictory" not in evidence.explanation

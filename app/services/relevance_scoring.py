@@ -18,11 +18,14 @@ from app.models import (
     ScorePenalty,
     SupportedField,
 )
-from app.services.company_deduplication import registrable_domain
+from app.services.company_deduplication import (
+    normalize_company_url,
+    registrable_domain,
+)
 
 _MAXIMUMS = {
     RelevanceComponent.TOPIC_MATCH: 30,
-    RelevanceComponent.LOCATION_MATCH: 20,
+    RelevanceComponent.COUNTRY_MATCH: 20,
     RelevanceComponent.RELEVANT_SERVICES: 15,
     RelevanceComponent.OFFICIAL_WEBSITE_CONFIDENCE: 10,
     RelevanceComponent.CONTACT_PAGE: 10,
@@ -145,9 +148,37 @@ def _contains_topic(field: SupportedField, terms: tuple[str, ...]) -> bool:
     return bool(terms) and any(term in value_tokens for term in terms)
 
 
+def _comparison_value(value: JsonValue) -> JsonValue:
+    """Normalize harmless representation differences before contradiction checks."""
+    if isinstance(value, str):
+        return _compact(value)
+    if isinstance(value, list):
+        normalized = [_comparison_value(item) for item in value]
+        return sorted(
+            normalized,
+            key=lambda item: json.dumps(
+                item,
+                sort_keys=True,
+                ensure_ascii=False,
+                separators=(",", ":"),
+            ),
+        )
+    if isinstance(value, dict):
+        return {
+            key.casefold(): _comparison_value(item)
+            for key, item in sorted(value.items(), key=lambda pair: pair[0].casefold())
+        }
+    return value
+
+
 def _json_key(value: JsonValue) -> str:
-    """Return a stable key for contradiction detection."""
-    return json.dumps(value, sort_keys=True, ensure_ascii=False, separators=(",", ":"))
+    """Return a semantic stable key for contradiction detection."""
+    return json.dumps(
+        _comparison_value(value),
+        sort_keys=True,
+        ensure_ascii=False,
+        separators=(",", ":"),
+    )
 
 
 def _contradictory_field_names(company: CompanyRecord) -> list[str]:
@@ -181,6 +212,20 @@ def _same_registrable_domain(first: str, second: str) -> bool:
         return False
 
 
+def _evidence_source_key(source: str) -> str:
+    """Collapse fragment and tracking variants to one evidence document."""
+    try:
+        return normalize_company_url(source)
+    except ValueError:
+        return source
+
+
+def _round_ratio(points: int, completed: int, total: int) -> int:
+    """Allocate integer points with deterministic round-half-up behavior."""
+    numerator = points * completed
+    return (2 * numerator + total) // (2 * total)
+
+
 class RelevanceScoringService:
     """Compute reproducible relevance points without any LLM scoring."""
 
@@ -203,6 +248,7 @@ class RelevanceScoringService:
 
         supported = _supported_fields(extraction)
         terms = _topic_terms(normalized_topic, normalized_location)
+        contradictory_fields = frozenset(_contradictory_field_names(company))
         components: dict[RelevanceComponent, ComponentScore] = {}
         penalties: list[ScorePenalty] = []
 
@@ -211,9 +257,10 @@ class RelevanceScoringService:
             terms,
             penalties,
         )
-        components[RelevanceComponent.LOCATION_MATCH] = self._location_score(
+        components[RelevanceComponent.COUNTRY_MATCH] = self._location_score(
             supported,
             normalized_location,
+            contradictory_fields,
             penalties,
         )
         components[RelevanceComponent.RELEVANT_SERVICES] = self._services_score(
@@ -242,7 +289,7 @@ class RelevanceScoringService:
             )
         )
 
-        total = round(sum(component.score for component in components.values()), 2)
+        total = sum(component.score for component in components.values())
         explanation = [
             f"{component.value}: {details.score:g}/{details.maximum} — "
             f"{details.explanation}"
@@ -259,24 +306,23 @@ class RelevanceScoringService:
     @staticmethod
     def _component(
         component: RelevanceComponent,
-        score: float,
+        score: int,
         explanation: str,
         penalties: list[ScorePenalty],
         penalty_reason: str | None = None,
     ) -> ComponentScore:
         """Create a component and record its transparent point gap."""
         maximum = _MAXIMUMS[component]
-        rounded_score = round(score, 2)
-        if rounded_score < maximum and penalty_reason:
+        if score < maximum and penalty_reason:
             penalties.append(
                 ScorePenalty(
                     component=component,
-                    points=round(maximum - rounded_score, 2),
+                    points=maximum - score,
                     reason=penalty_reason,
                 )
             )
         return ComponentScore(
-            score=rounded_score,
+            score=score,
             maximum=maximum,
             explanation=explanation,
         )
@@ -341,6 +387,7 @@ class RelevanceScoringService:
         self,
         fields: list[SupportedField],
         location: str,
+        contradictory_fields: frozenset[str],
         penalties: list[ScorePenalty],
     ) -> ComponentScore:
         """Score explicit location facts without using country-code domains."""
@@ -359,8 +406,18 @@ class RelevanceScoringService:
             if field.basis is FactBasis.EXPLICIT and (
                 exact_match or (target_is_netherlands and country_match)
             ):
+                if field.name in contradictory_fields:
+                    return self._component(
+                        RelevanceComponent.COUNTRY_MATCH,
+                        10,
+                        f"Explicit evidence supports {location!r}, but another "
+                        "evidenced value contradicts it.",
+                        penalties,
+                        "Ten location points were withheld because location "
+                        "evidence is contradictory.",
+                    )
                 return self._component(
-                    RelevanceComponent.LOCATION_MATCH,
+                    RelevanceComponent.COUNTRY_MATCH,
                     20,
                     f"Explicit evidence supports the requested location {location!r}.",
                     penalties,
@@ -369,7 +426,7 @@ class RelevanceScoringService:
                 exact_match or (target_is_netherlands and country_match)
             ):
                 return self._component(
-                    RelevanceComponent.LOCATION_MATCH,
+                    RelevanceComponent.COUNTRY_MATCH,
                     5,
                     f"The requested location {location!r} is only inferred.",
                     penalties,
@@ -386,7 +443,7 @@ class RelevanceScoringService:
                 )
             ):
                 return self._component(
-                    RelevanceComponent.LOCATION_MATCH,
+                    RelevanceComponent.COUNTRY_MATCH,
                     10,
                     "A Dutch city is explicit, but the Netherlands is not "
                     "explicitly stated.",
@@ -395,7 +452,7 @@ class RelevanceScoringService:
                     "country evidence.",
                 )
         return self._component(
-            RelevanceComponent.LOCATION_MATCH,
+            RelevanceComponent.COUNTRY_MATCH,
             0,
             f"No explicit evidence supports location {location!r}; domain suffixes "
             "are not location evidence.",
@@ -533,8 +590,12 @@ class RelevanceScoringService:
                 penalties,
                 "All evidence-quality points were withheld because evidence is absent.",
             )
-        unique_urls = {str(url) for field in fields for url in field.evidence_urls}
-        score = 8.0 + (2.0 if len(unique_urls) >= 2 else 0.0)
+        unique_urls = {
+            _evidence_source_key(str(url))
+            for field in fields
+            for url in field.evidence_urls
+        }
+        score = 8 + (2 if len(unique_urls) >= 2 else 0)
         reasons = [
             f"{len(fields)} supported field(s) cite {len(unique_urls)} unique URL(s)."
         ]
@@ -557,7 +618,7 @@ class RelevanceScoringService:
                 f"Weak or uncited extracted fields reduced quality by "
                 f"{weak_deduction} points: {', '.join(weak_fields)}."
             )
-        score = max(0.0, score)
+        score = max(0, score)
         return self._component(
             RelevanceComponent.EVIDENCE_QUALITY,
             score,
@@ -597,7 +658,7 @@ class RelevanceScoringService:
             for requested in requested_fields
             if requested.name not in complete
         ]
-        score = 5 * len(complete) / len(requested_fields)
+        score = _round_ratio(5, len(complete), len(requested_fields))
         explanation = (
             f"{len(complete)} of {len(requested_fields)} requested fields have "
             "supported values."

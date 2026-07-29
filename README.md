@@ -167,11 +167,12 @@ malformed or internally contradictory official IDs require manual review.
 
 ## Relevance scoring
 
-`RelevanceScoringService` calculates a reproducible 0–100 score from seven
-fixed components: topic (30), location (20), relevant services (15), official
-website confidence (10), contact page (10), evidence quality (10), and requested
-field completeness (5). Every component includes a human-readable rationale,
-and every withheld point is represented as a structured evidence penalty.
+`RelevanceScoringService` calculates a reproducible integer score from 0–100
+using seven fixed components: topic (30), country (20), relevant services (15),
+official website confidence (10), contact page (10), evidence quality (10), and
+requested field completeness (5). Every component includes a human-readable
+rationale, and every withheld integer point is represented as a structured
+evidence penalty; the serialized component key is `country_match`.
 
 For research such as “Shopify agencies in the Netherlands,” full topic and
 service points require explicit cited Shopify service evidence. Full location
