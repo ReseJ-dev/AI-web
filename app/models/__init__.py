@@ -13,6 +13,7 @@ from app.models.domain import (
     ResearchRunStatus,
     SkippedSource,
 )
+from app.models.search import SearchCandidate, SearchParameters
 
 __all__ = [
     "CompanyRecord",
@@ -25,5 +26,7 @@ __all__ = [
     "ResearchRequest",
     "ResearchRun",
     "ResearchRunStatus",
+    "SearchCandidate",
+    "SearchParameters",
     "SkippedSource",
 ]

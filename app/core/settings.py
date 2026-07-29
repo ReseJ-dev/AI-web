@@ -3,7 +3,7 @@
 from functools import lru_cache
 from pathlib import Path
 
-from pydantic import Field
+from pydantic import Field, SecretStr
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
@@ -27,6 +27,30 @@ class Settings(BaseSettings):
     source_policy_config_dir: Path = Field(
         default=Path("config"),
         validation_alias="SOURCE_POLICY_CONFIG_DIR",
+    )
+    brave_search_api_key: SecretStr | None = Field(
+        default=None,
+        validation_alias="BRAVE_SEARCH_API_KEY",
+    )
+    search_result_retention_allowed: bool = Field(
+        default=False,
+        validation_alias="SEARCH_RESULT_RETENTION_ALLOWED",
+    )
+    search_timeout_seconds: float = Field(
+        default=10.0,
+        gt=0,
+        validation_alias="SEARCH_TIMEOUT_SECONDS",
+    )
+    search_max_retries: int = Field(
+        default=3,
+        ge=0,
+        le=10,
+        validation_alias="SEARCH_MAX_RETRIES",
+    )
+    search_backoff_seconds: float = Field(
+        default=0.5,
+        ge=0,
+        validation_alias="SEARCH_BACKOFF_SECONDS",
     )
 
 

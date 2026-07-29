@@ -60,6 +60,23 @@ Set `SOURCE_POLICY_CONFIG_DIR` to load policy files from another directory.
 Configuration changes can be applied at runtime with
 `SourcePolicyService.reload()`.
 
+## Search provider and result retention
+
+Candidate discovery uses the replaceable asynchronous `SearchProvider`
+contract. Set `BRAVE_SEARCH_API_KEY` to use `BraveSearchProvider`; tests and
+offline development can use `FakeSearchProvider`.
+
+Brave search candidates are transient process-memory objects. Raw API responses
+and search snippets are never persisted, and the candidate model intentionally
+has no snippet field. `SEARCH_RESULT_RETENTION_ALLOWED` defaults to `false`.
+
+Persistent retention of Brave Search results requires a subscription or
+agreement that explicitly grants storage rights. Setting
+`SEARCH_RESULT_RETENTION_ALLOWED=true` does not itself grant those rights and
+does not enable a persistence implementation. Confirm applicable rights under
+the [Brave Search API terms](https://api-dashboard.search.brave.com/documentation/resources/terms-of-service)
+and your plan before adding any storage path.
+
 ## Quality checks
 
 ```bash
