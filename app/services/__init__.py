@@ -1,5 +1,12 @@
 """Application services."""
 
+from app.services.company_deduplication import (
+    CompanyDeduplicationService,
+    normalize_company_name,
+    normalize_company_url,
+    normalize_official_identifier,
+    registrable_domain,
+)
 from app.services.compliance_preflight import CompliancePreflightService
 from app.services.domain_normalization import (
     InvalidDomainError,
@@ -23,6 +30,7 @@ from app.services.structured_data_extraction import (
 from app.services.terms_policy import TermsPolicyScanner
 
 __all__ = [
+    "CompanyDeduplicationService",
     "CompliancePreflightService",
     "CompositeCompanyExtractor",
     "DeterministicCompanyExtractor",
@@ -37,5 +45,9 @@ __all__ = [
     "SourcePolicyService",
     "StructuredDataExtractor",
     "TermsPolicyScanner",
+    "normalize_company_name",
+    "normalize_company_url",
     "normalize_domain",
+    "normalize_official_identifier",
+    "registrable_domain",
 ]

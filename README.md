@@ -119,6 +119,25 @@ to the provider. Select a registered provider and model with `LLM_PROVIDER` and
 `LLM_MODEL`. This commit includes an in-memory fake provider; vendor adapters can
 be registered without changing extraction services.
 
+## Company deduplication
+
+`CompanyDeduplicationService` resolves company pairs in a fixed, explainable
+order: registrable website domain, redirect-derived canonical domain, exact
+normalized legal name, high-confidence fuzzy name, then shared OpenCorporates
+or Wikidata identifiers. Exact or fuzzy name matches without corroborating
+evidence always require manual review and never merge records automatically.
+
+URL normalization removes scheme differences, `www`, trailing slashes,
+fragments, and common tracking parameters while preserving meaningful query
+parameters. Internationalized hosts use IDNA, and registrable domains use the
+bundled Public Suffix List snapshot without network access. Company names are
+case-, punctuation-, whitespace-, and common legal-suffix-insensitive.
+
+Merge decisions select values by confidence, retain losing values as
+alternatives, combine evidence URLs, retain both source record IDs, and include
+the complete resolution and merge explanation. Conflicting official IDs keep
+records separate; malformed official IDs require manual review.
+
 ## Quality checks
 
 ```bash

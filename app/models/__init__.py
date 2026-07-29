@@ -27,6 +27,14 @@ from app.models.domain import (
     ResearchRunStatus,
     SkippedSource,
 )
+from app.models.entity_resolution import (
+    CompanyEntity,
+    EntityResolutionOutcome,
+    EntityResolutionResult,
+    MergeMetadata,
+    OfficialIdentifier,
+    OfficialIdentifierSource,
+)
 from app.models.extraction import (
     CompanyExtraction,
     ExtractionStatus,
@@ -39,11 +47,14 @@ from app.models.extraction import (
 from app.models.search import SearchCandidate, SearchParameters
 
 __all__ = [
+    "CompanyEntity",
     "CompanyExtraction",
     "CompanyRecord",
     "ComplianceDecision",
     "CompliancePreflightResult",
     "ComplianceStatus",
+    "EntityResolutionOutcome",
+    "EntityResolutionResult",
     "Evidence",
     "ExtractedField",
     "ExtractedPageContent",
@@ -52,7 +63,10 @@ __all__ = [
     "LLMCompanyResponse",
     "LLMExtractionRequest",
     "LLMPageInput",
+    "MergeMetadata",
     "NavigationLink",
+    "OfficialIdentifier",
+    "OfficialIdentifierSource",
     "PageCandidate",
     "PageCategory",
     "PreflightDecision",
