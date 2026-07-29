@@ -49,6 +49,17 @@ Apply database migrations:
 make migrate
 ```
 
+## Source policies
+
+Source decisions are configured in `config/approved_domains.yaml`,
+`config/blocked_domains.yaml`, and `config/source_policies.yaml`. Exact rules
+match only one host, while `include_subdomains` rules match both the configured
+host and its descendants. Candidate and unknown domains require manual review.
+
+Set `SOURCE_POLICY_CONFIG_DIR` to load policy files from another directory.
+Configuration changes can be applied at runtime with
+`SourcePolicyService.reload()`.
+
 ## Quality checks
 
 ```bash

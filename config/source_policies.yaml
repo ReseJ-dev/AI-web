@@ -1,0 +1,11 @@
+# Candidate domains are never approved automatically. They require a manual
+# review until explicitly moved to the approved-domain configuration.
+candidate_review:
+  exact_domains:
+    - askphill.com
+    - opklopper.nl
+    - shopmonkey.nl
+    - code.digital
+  include_subdomains: []
+
+unknown_domain_decision: manual_review_required

@@ -1,0 +1,4 @@
+# Exact rules match only the named host. Subdomain rules match the named host
+# and all of its descendants.
+exact_domains: []
+include_subdomains: []

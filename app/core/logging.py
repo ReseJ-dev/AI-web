@@ -1,15 +1,16 @@
 """Structured logging configuration."""
 
 import logging
-import os
 import sys
 
 import structlog
 
+from app.core.settings import get_settings
+
 
 def configure_logging() -> None:
     """Configure standard-library and structured logging for the application."""
-    log_level = os.getenv("LOG_LEVEL", "INFO").upper()
+    log_level = get_settings().log_level.upper()
     logging.basicConfig(
         format="%(message)s",
         stream=sys.stdout,

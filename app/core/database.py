@@ -1,6 +1,5 @@
 """Database engine and session configuration."""
 
-import os
 from collections.abc import Iterator
 from pathlib import Path
 from typing import Any
@@ -9,7 +8,7 @@ from sqlalchemy import Engine, create_engine, event
 from sqlalchemy.engine import make_url
 from sqlalchemy.orm import Session, sessionmaker
 
-DEFAULT_DATABASE_URL = "sqlite:///./data/app.db"
+from app.core.settings import get_settings
 
 
 def _enable_sqlite_foreign_keys(
@@ -34,7 +33,7 @@ def _prepare_sqlite_directory(database_url: str) -> None:
 
 def create_database_engine(database_url: str | None = None) -> Engine:
     """Build an engine suitable for SQLite locally and PostgreSQL in production."""
-    url = database_url or os.getenv("DATABASE_URL") or DEFAULT_DATABASE_URL
+    url = database_url or get_settings().database_url
     _prepare_sqlite_directory(url)
     connect_args = {"check_same_thread": False} if url.startswith("sqlite") else {}
     database_engine = create_engine(

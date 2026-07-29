@@ -1,0 +1,10 @@
+# These platforms are excluded as research sources. Their subdomains are
+# excluded as well.
+exact_domains: []
+include_subdomains:
+  - shopify.com
+  - linkedin.com
+  - clutch.co
+  - crunchbase.com
+  - facebook.com
+  - instagram.com
