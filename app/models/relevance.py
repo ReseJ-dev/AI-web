@@ -58,6 +58,10 @@ class RelevanceScoreResult(BaseModel):
     @model_validator(mode="after")
     def validate_total(self) -> Self:
         """Require the reported total to equal the component sum."""
+        if set(self.components) != set(RelevanceComponent):
+            raise ValueError("all seven relevance components are required")
+        if sum(component.maximum for component in self.components.values()) != 100:
+            raise ValueError("component maximum scores must sum to 100")
         component_total = round(
             sum(component.score for component in self.components.values()),
             2,

@@ -138,6 +138,22 @@ alternatives, combine evidence URLs, retain both source record IDs, and include
 the complete resolution and merge explanation. Conflicting official IDs keep
 records separate; malformed official IDs require manual review.
 
+## Relevance scoring
+
+`RelevanceScoringService` calculates a reproducible 0–100 score from seven
+fixed components: topic (30), location (20), relevant services (15), official
+website confidence (10), contact page (10), evidence quality (10), and requested
+field completeness (5). Every component includes a human-readable rationale,
+and every withheld point is represented as a structured evidence penalty.
+
+For research such as “Shopify agencies in the Netherlands,” full topic and
+service points require explicit cited Shopify service evidence. Full location
+points require explicit Netherlands evidence; an `.nl` domain is never treated
+as proof of location. Contradictory, inferred, low-confidence, or uncited facts
+reduce evidence quality. Unsupported criteria score zero, and model-proposed
+relevance numbers are ignored—the final numerical score is always computed by
+deterministic application code.
+
 ## Quality checks
 
 ```bash

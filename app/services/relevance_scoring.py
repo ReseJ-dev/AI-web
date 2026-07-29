@@ -48,6 +48,9 @@ _TOPIC_STOPWORDS = frozenset(
     }
 )
 _SERVICE_FIELDS = frozenset({"service", "services", "offerings"})
+_IGNORED_MODEL_SCORE_FIELDS = frozenset(
+    {"proposed_relevance_score", "relevance_score", "score"}
+)
 _LOCATION_FIELDS = frozenset(
     {
         "address",
@@ -119,7 +122,11 @@ def _supported_fields(extraction: CompanyExtraction) -> list[SupportedField]:
     return [
         field
         for field in extraction.fields
-        if field.value is not None and field.evidence_urls
+        if (
+            field.value is not None
+            and field.evidence_urls
+            and field.name not in _IGNORED_MODEL_SCORE_FIELDS
+        )
     ]
 
 
@@ -134,7 +141,8 @@ def _matching_fields(
 def _contains_topic(field: SupportedField, terms: tuple[str, ...]) -> bool:
     """Return whether a field value explicitly includes a topic term."""
     values = _flatten_strings(field.value)
-    return bool(terms) and any(term in value for term in terms for value in values)
+    value_tokens = {token for value in values for token in _TOKEN.findall(value)}
+    return bool(terms) and any(term in value_tokens for term in terms)
 
 
 def _json_key(value: JsonValue) -> str:
@@ -444,6 +452,10 @@ class RelevanceScoringService:
             website is not None
             and website.basis is FactBasis.EXPLICIT
             and isinstance(website.value, str)
+            and any(
+                _same_registrable_domain(website.value, str(evidence_url))
+                for evidence_url in website.evidence_urls
+            )
             and (
                 company.website_url is None
                 or _same_registrable_domain(
@@ -486,6 +498,10 @@ class RelevanceScoringService:
             and _same_registrable_domain(
                 contact.value,
                 str(company.website_url),
+            )
+            and any(
+                _same_registrable_domain(contact.value, str(evidence_url))
+                for evidence_url in contact.evidence_urls
             )
         ):
             return self._component(
