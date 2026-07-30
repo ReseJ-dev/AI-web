@@ -45,6 +45,19 @@ class _CompliancePreflight:
         )
 
 
+class _PrefetchingCompliancePreflight(_CompliancePreflight):
+    """Expose the approved homepage body exactly once."""
+
+    def __init__(self, html: str) -> None:
+        super().__init__()
+        self.html: str | None = html
+
+    def take_prefetched_content(self, target_url: str) -> str | None:
+        assert target_url == "https://example.com/"
+        html, self.html = self.html, None
+        return html
+
+
 def _run_crawl(
     handler: Handler,
     *,
@@ -96,6 +109,23 @@ def test_redirects_are_manually_followed_and_every_hop_is_approved() -> None:
     assert [str(page.url) for page in result.pages] == ["https://example.com/home"]
     assert requested == ["https://example.com/", "https://example.com/home"]
     assert preflight.calls == requested
+
+
+def test_preflight_homepage_body_is_not_fetched_twice() -> None:
+    """The crawler consumes bounded approved HTML already fetched for terms."""
+    preflight = _PrefetchingCompliancePreflight(
+        "<html><main>Approved company homepage</main></html>"
+    )
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        raise AssertionError(f"Unexpected duplicate GET: {request.url}")
+
+    result, _ = _run_crawl(handler, preflight=preflight)
+
+    assert result.pages[0].html == (
+        "<html><main>Approved company homepage</main></html>"
+    )
+    assert preflight.calls == ["https://example.com/"]
 
 
 def test_unapproved_cross_domain_redirect_stops_before_network_access() -> None:

@@ -79,6 +79,30 @@ def test_unavailable_robots_file_allows_access() -> None:
     assert record.http_status == 404
 
 
+def test_cross_domain_robots_redirect_is_not_followed() -> None:
+    """A robots redirect cannot move policy evaluation to another domain."""
+    requested_hosts: list[str] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        requested_hosts.append(request.url.host)
+        return httpx.Response(
+            302,
+            request=request,
+            headers={"Location": "https://other.example/robots.txt"},
+        )
+
+    async def scenario() -> RobotsPolicyRecord:
+        async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as client:
+            return await RobotsPolicyService(client=client).check(
+                "https://example.com/public"
+            )
+
+    record = asyncio.run(scenario())
+
+    assert record.decision is PreflightDecision.REJECTED
+    assert requested_hosts == ["example.com"]
+
+
 def test_malformed_robots_file_requires_manual_review() -> None:
     """An unparseable robots document is treated as ambiguous."""
 

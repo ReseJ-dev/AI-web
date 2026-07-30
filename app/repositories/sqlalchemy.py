@@ -106,6 +106,7 @@ class SqlAlchemyCompanyRecordRepository:
                         field.model_dump(mode="json")
                         for field in company.extracted_fields
                     ],
+                    record_metadata=company.metadata,
                     created_at=company.created_at,
                     updated_at=company.updated_at,
                 )
@@ -139,6 +140,7 @@ class SqlAlchemyCompanyRecordRepository:
             extracted_fields=[
                 ExtractedField.model_validate(field) for field in row.extracted_fields
             ],
+            metadata=row.record_metadata,
             created_at=row.created_at,
             updated_at=row.updated_at,
         )

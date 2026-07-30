@@ -225,7 +225,14 @@ class _CsvExporter(ResultExporter):
 
 
 @pytest.mark.anyio
-async def test_complete_thirty_result_workflow_is_resilient() -> None:
+@pytest.mark.parametrize(
+    ("retention_allowed", "persisted_skips"),
+    [(False, 0), (True, 2)],
+)
+async def test_complete_thirty_result_workflow_is_resilient(
+    retention_allowed: bool,
+    persisted_skips: int,
+) -> None:
     search = _SearchProvider()
     crawler = _WebsiteCrawler()
     enrichers = [
@@ -252,14 +259,19 @@ async def test_complete_thirty_result_workflow_is_resilient() -> None:
         search_budget=2,
         search_page_size=20,
         crawl_page_limit=4,
+        search_result_retention_allowed=retention_allowed,
     )
 
     result = await orchestrator.run(
         ResearchRequest(
-            query="Shopify agencies",
+            query="Shopify agencies in the Netherlands",
             requested_fields=[
+                {"name": "company_name"},
+                {"name": "website_url"},
                 {"name": "services"},
                 {"name": "country"},
+                {"name": "contact_page_url"},
+                {"name": "summary"},
             ],
             result_count=30,
         ),
@@ -284,7 +296,7 @@ async def test_complete_thirty_result_workflow_is_resilient() -> None:
         "blocked.example",
         "broken.example",
     }
-    assert len(skipped.sources) == 2
+    assert len(skipped.sources) == persisted_skips
     assert all(enricher.calls == 30 for enricher in enrichers)
     assert exporter.record_count == 30
     assert result.exports[0].record_count == 30
@@ -326,7 +338,8 @@ async def test_complete_thirty_result_workflow_is_resilient() -> None:
     }
     assert list(first_stage_index.values()) == sorted(first_stage_index.values())
     assert progress == result.events
-    assert any("fixture crawl timeout" in warning for warning in result.warnings)
+    assert any("TimeoutError" in warning for warning in result.warnings)
+    assert all("fixture crawl timeout" not in warning for warning in result.warnings)
 
 
 @pytest.mark.anyio

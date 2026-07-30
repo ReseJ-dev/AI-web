@@ -9,6 +9,7 @@ from pydantic import BaseModel, ConfigDict, Field, HttpUrl, model_validator
 from app.models.domain import (
     CompanyRecord,
     ResearchRun,
+    ResearchRunStatus,
     SkippedSource,
     UtcTimestampedModel,
     utc_now,
@@ -47,6 +48,17 @@ class ResearchProgressEvent(UtcTimestampedModel):
     total_items: int | None = Field(default=None, ge=0)
     warning: bool = False
     occurred_at: datetime = Field(default_factory=utc_now)
+
+    @model_validator(mode="after")
+    def completed_does_not_exceed_total(self) -> Self:
+        """Keep progress counters internally consistent."""
+        if (
+            self.completed_items is not None
+            and self.total_items is not None
+            and self.completed_items > self.total_items
+        ):
+            raise ValueError("completed_items must not exceed total_items")
+        return self
 
 
 class CrawledPage(BaseModel):
@@ -154,4 +166,17 @@ class ResearchOrchestrationResult(BaseModel):
         }
         if self.final_stage not in terminal:
             raise ValueError("orchestration result requires a terminal stage")
+        if self.events[-1].stage is not self.final_stage:
+            raise ValueError("final_stage must match the last progress event")
+        expected_status = (
+            ResearchRunStatus.FAILED
+            if self.final_stage is ResearchProgressStage.FAILED
+            else ResearchRunStatus.COMPLETED
+        )
+        if self.run.status is not expected_status:
+            raise ValueError("run status does not match the terminal progress stage")
+        if any(
+            record.company.research_run_id != self.run.id for record in self.records
+        ):
+            raise ValueError("all result records must belong to the final run")
         return self

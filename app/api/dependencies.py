@@ -69,10 +69,7 @@ def _google_exporter_factory(
     credentials = bool(settings.google_service_account_file) or _secret_present(
         settings.google_service_account_json
     )
-    target = bool(settings.google_sheets_spreadsheet_id) or (
-        settings.google_sheets_create_allowed
-    )
-    if not credentials or not target:
+    if not credentials:
         return None
 
     def build(spreadsheet_id: str | None) -> ResultExporter:

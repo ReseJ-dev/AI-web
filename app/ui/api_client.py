@@ -32,6 +32,7 @@ class ResearchApiClient:
         *,
         client: httpx.Client | None = None,
         timeout_seconds: float = 20.0,
+        access_token: str | None = None,
     ) -> None:
         normalized = base_url.strip().rstrip("/")
         if not normalized.startswith(("http://", "https://")):
@@ -39,6 +40,7 @@ class ResearchApiClient:
         if timeout_seconds <= 0:
             raise ValueError("timeout_seconds must be greater than zero")
         self._owns_client = client is None
+        self._access_token = access_token.strip() if access_token else None
         self._client = client or httpx.Client(
             base_url=normalized,
             timeout=httpx.Timeout(timeout_seconds),
@@ -72,13 +74,28 @@ class ResearchApiClient:
         return self._validate(ResearchResultsResponse, response)
 
     def get_skipped_sources(self, run_id: UUID | str) -> SkippedSourcesResponse:
-        """Fetch the complete bounded skipped-source report."""
-        response = self._request(
-            "GET",
-            f"/api/research-runs/{run_id}/skipped-sources",
-            params={"offset": 0, "limit": 100},
-        )
-        return self._validate(SkippedSourcesResponse, response)
+        """Fetch every page of the skipped-source report."""
+        items = []
+        offset = 0
+        total = 0
+        while True:
+            response = self._request(
+                "GET",
+                f"/api/research-runs/{run_id}/skipped-sources",
+                params={"offset": offset, "limit": 100},
+            )
+            page = self._validate(SkippedSourcesResponse, response)
+            items.extend(page.items)
+            total = page.total
+            offset += len(page.items)
+            if offset >= total or not page.items:
+                return SkippedSourcesResponse(
+                    run_id=page.run_id,
+                    items=items,
+                    total=total,
+                    offset=0,
+                    limit=100,
+                )
 
     def export_google_sheets(
         self,
@@ -107,13 +124,16 @@ class ResearchApiClient:
         json: object | None = None,
         params: dict[str, int] | None = None,
     ) -> httpx.Response:
+        headers = {"X-Request-ID": f"dashboard-{uuid4().hex}"}
+        if self._access_token is not None:
+            headers["Authorization"] = f"Bearer {self._access_token}"
         try:
             response = self._client.request(
                 method,
                 path,
                 json=json,
                 params=params,
-                headers={"X-Request-ID": f"dashboard-{uuid4().hex}"},
+                headers=headers,
             )
         except httpx.RequestError as error:
             raise DashboardApiError(

@@ -5,6 +5,8 @@ from typing import Any, cast
 
 import yaml
 
+from app.core.settings import Settings
+
 PROJECT_ROOT = Path(__file__).parents[2]
 
 
@@ -55,12 +57,21 @@ def test_compose_requires_runtime_database_credentials() -> None:
         }
         & ui_environment.keys()
     )
+    backend_variables = {
+        str(field.validation_alias or name)
+        for name, field in Settings.model_fields.items()
+        if str(field.validation_alias or name) != "UI_API_BASE_URL"
+    }
+    assert backend_variables <= api_environment.keys()
+    assert "./.secrets:/run/secrets:ro" in _mapping(services["api"])["volumes"]
+    assert ui_environment["UI_API_ACCESS_TOKEN"] == "${API_ACCESS_TOKEN:-}"
 
 
 def test_images_use_python_312_non_root_users_and_health_checks() -> None:
     for filename in ("api.Dockerfile", "streamlit.Dockerfile"):
         dockerfile = (PROJECT_ROOT / "docker" / filename).read_text()
         assert dockerfile.startswith("FROM python:3.12-slim")
+        assert "COPY config ./config" in dockerfile
         assert "\nUSER app\n" in dockerfile
         assert "\nHEALTHCHECK " in dockerfile
 

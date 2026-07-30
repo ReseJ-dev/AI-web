@@ -2,9 +2,17 @@
 
 from functools import lru_cache
 from pathlib import Path
+from urllib.parse import urlsplit
 
-from pydantic import Field, SecretStr, field_validator
+from pydantic import Field, SecretStr, field_validator, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
+
+
+def _default_config_dir() -> Path:
+    """Prefer repository config, then fall back to wheel-packaged defaults."""
+    repository_config = Path("config")
+    packaged_config = Path(__file__).resolve().parents[1] / "config"
+    return repository_config if repository_config.is_dir() else packaged_config
 
 
 class Settings(BaseSettings):
@@ -16,6 +24,7 @@ class Settings(BaseSettings):
         extra="ignore",
         case_sensitive=False,
         frozen=True,
+        populate_by_name=True,
     )
 
     app_env: str = Field(default="development", validation_alias="APP_ENV")
@@ -25,8 +34,12 @@ class Settings(BaseSettings):
         validation_alias="DATABASE_URL",
     )
     source_policy_config_dir: Path = Field(
-        default=Path("config"),
+        default_factory=_default_config_dir,
         validation_alias="SOURCE_POLICY_CONFIG_DIR",
+    )
+    api_access_token: SecretStr | None = Field(
+        default=None,
+        validation_alias="API_ACCESS_TOKEN",
     )
     brave_search_api_key: SecretStr | None = Field(
         default=None,
@@ -326,6 +339,67 @@ class Settings(BaseSettings):
             return None
         return value
 
+    @field_validator("api_access_token", "llm_api_key", mode="before")
+    @classmethod
+    def blank_api_secrets_are_unset(cls, value: object) -> object:
+        """Treat blank API credential variables as unconfigured."""
+        if isinstance(value, str) and not value.strip():
+            return None
+        return value
+
+    @model_validator(mode="after")
+    def credentials_require_tls(self) -> "Settings":
+        """Require safe transport and API protection around configured credentials."""
+        if (
+            self.llm_api_key is not None
+            and self.llm_api_url is not None
+            and urlsplit(self.llm_api_url).scheme.casefold() != "https"
+        ):
+            raise ValueError("LLM_API_URL must use HTTPS when LLM_API_KEY is set")
+        paid_or_mutating_credentials = (
+            self.brave_search_api_key is not None
+            or self.google_service_account_file is not None
+            or self.google_service_account_json is not None
+        )
+        if paid_or_mutating_credentials and self.api_access_token is None:
+            raise ValueError(
+                "API_ACCESS_TOKEN is required when search or Google Sheets "
+                "credentials are configured"
+            )
+        return self
+
+
+class UiSettings(BaseSettings):
+    """Minimal dashboard configuration that cannot load backend provider secrets."""
+
+    model_config = SettingsConfigDict(
+        env_file=".env",
+        env_file_encoding="utf-8",
+        extra="ignore",
+        case_sensitive=False,
+        frozen=True,
+        populate_by_name=True,
+    )
+
+    api_base_url: str = Field(
+        default="http://localhost:8000",
+        min_length=1,
+        max_length=2_048,
+        validation_alias="UI_API_BASE_URL",
+    )
+    api_access_token: SecretStr | None = Field(
+        default=None,
+        validation_alias="UI_API_ACCESS_TOKEN",
+    )
+
+    @field_validator("api_access_token", mode="before")
+    @classmethod
+    def blank_token_is_unset(cls, value: object) -> object:
+        """Treat an empty dashboard token as absent."""
+        if isinstance(value, str) and not value.strip():
+            return None
+        return value
+
 
 @lru_cache(maxsize=1)
 def get_settings() -> Settings:
@@ -337,3 +411,9 @@ def reload_settings() -> Settings:
     """Clear the settings cache and reload environment values."""
     get_settings.cache_clear()
     return get_settings()
+
+
+@lru_cache(maxsize=1)
+def get_ui_settings() -> UiSettings:
+    """Return dashboard-only settings without constructing backend settings."""
+    return UiSettings()

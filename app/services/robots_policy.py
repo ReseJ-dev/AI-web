@@ -6,15 +6,23 @@ import re
 import time
 from dataclasses import dataclass
 from datetime import datetime
-from urllib.parse import quote, urlsplit, urlunsplit
+from urllib.parse import quote, urljoin, urlsplit, urlunsplit
 
 import httpx
 
 from app.core.settings import get_settings
 from app.models import PreflightDecision, RobotsPolicyRecord
 from app.models.domain import utc_now
+from app.services.domain_normalization import normalize_domain
+from app.services.outbound_safety import (
+    UnsafeOutboundUrlError,
+    ensure_public_http_url,
+    validate_public_http_url,
+)
 
 _MAX_ROBOTS_BYTES = 500 * 1_024
+_MAX_ROBOTS_REDIRECTS = 5
+_REDIRECT_STATUSES = frozenset({301, 302, 303, 307, 308})
 _PERCENT_ESCAPE = re.compile(r"%([0-9a-fA-F]{2})")
 _PRODUCT_TOKEN = re.compile(r"^[^\s/]+")
 _UNRESERVED = frozenset(
@@ -208,6 +216,14 @@ class _CachedRobotsPolicy:
     fallback_reason: str | None
 
 
+@dataclass(frozen=True, slots=True)
+class _FetchedRobots:
+    url: str
+    status_code: int
+    content: bytes
+    oversized: bool
+
+
 class RobotsPolicyService:
     """Fetch, cache, and evaluate robots.txt before content access."""
 
@@ -297,16 +313,8 @@ class RobotsPolicyService:
         checked_at = utc_now()
         expires_at = time.monotonic() + self._cache_ttl_seconds
         try:
-            response = await self._client.get(
-                robots_url,
-                headers={
-                    "Accept": "text/plain",
-                    "User-Agent": self._user_agent,
-                },
-                timeout=self._timeout_seconds,
-                follow_redirects=True,
-            )
-        except httpx.TransportError:
+            fetched = await self._fetch_bounded(robots_url)
+        except (httpx.TransportError, UnsafeOutboundUrlError):
             decision = (
                 PreflightDecision.REJECTED
                 if self._strict_mode
@@ -326,14 +334,14 @@ class RobotsPolicyService:
                 ),
             )
 
-        response_hash = hashlib.sha256(response.content).hexdigest()
-        status = response.status_code
+        response_hash = hashlib.sha256(fetched.content).hexdigest()
+        status = fetched.status_code
         if 200 <= status < 300:
-            if len(response.content) > _MAX_ROBOTS_BYTES:
+            if fetched.oversized:
                 return _CachedRobotsPolicy(
                     expires_at=expires_at,
                     checked_at=checked_at,
-                    robots_url=robots_url,
+                    robots_url=fetched.url,
                     http_status=status,
                     response_hash=response_hash,
                     rules=None,
@@ -346,10 +354,12 @@ class RobotsPolicyService:
             return _CachedRobotsPolicy(
                 expires_at=expires_at,
                 checked_at=checked_at,
-                robots_url=robots_url,
+                robots_url=fetched.url,
                 http_status=status,
                 response_hash=response_hash,
-                rules=_RobotsRules.parse(response.text),
+                rules=_RobotsRules.parse(
+                    fetched.content.decode("utf-8", errors="replace")
+                ),
                 fallback_decision=None,
                 fallback_reason=None,
             )
@@ -358,7 +368,7 @@ class RobotsPolicyService:
             return _CachedRobotsPolicy(
                 expires_at=expires_at,
                 checked_at=checked_at,
-                robots_url=robots_url,
+                robots_url=fetched.url,
                 http_status=status,
                 response_hash=response_hash,
                 rules=_RobotsRules(groups=(), ambiguous=False),
@@ -385,13 +395,61 @@ class RobotsPolicyService:
         return _CachedRobotsPolicy(
             expires_at=expires_at,
             checked_at=checked_at,
-            robots_url=robots_url,
+            robots_url=fetched.url,
             http_status=status,
             response_hash=response_hash,
             rules=None,
             fallback_decision=decision,
             fallback_reason=reason,
         )
+
+    async def _fetch_bounded(self, robots_url: str) -> _FetchedRobots:
+        """Follow only safe same-domain redirects and stream a bounded body."""
+        current_url = robots_url
+        origin_domain = normalize_domain(robots_url)
+        for redirect_count in range(_MAX_ROBOTS_REDIRECTS + 1):
+            validate_public_http_url(current_url)
+            if self._owns_client:
+                await ensure_public_http_url(current_url)
+            async with self._client.stream(
+                "GET",
+                current_url,
+                headers={
+                    "Accept": "text/plain",
+                    "User-Agent": self._user_agent,
+                },
+                timeout=self._timeout_seconds,
+                follow_redirects=False,
+            ) as response:
+                if response.status_code in _REDIRECT_STATUSES:
+                    location = response.headers.get("Location")
+                    if location is None or redirect_count >= _MAX_ROBOTS_REDIRECTS:
+                        raise UnsafeOutboundUrlError(
+                            "robots.txt redirect could not be followed safely."
+                        )
+                    next_url = urljoin(current_url, location)
+                    validate_public_http_url(next_url)
+                    if normalize_domain(next_url) != origin_domain:
+                        raise UnsafeOutboundUrlError(
+                            "robots.txt redirected outside the approved domain."
+                        )
+                    current_url = next_url
+                    continue
+                content = bytearray()
+                oversized = False
+                async for chunk in response.aiter_bytes():
+                    remaining = _MAX_ROBOTS_BYTES + 1 - len(content)
+                    content.extend(chunk[:remaining])
+                    if len(content) > _MAX_ROBOTS_BYTES:
+                        oversized = True
+                        break
+                return _FetchedRobots(
+                    url=current_url,
+                    status_code=response.status_code,
+                    content=bytes(content),
+                    oversized=oversized,
+                )
+        raise UnsafeOutboundUrlError("robots.txt redirect limit was exceeded.")
 
     @staticmethod
     def _target_parts(target_url: str) -> tuple[str, str, str]:

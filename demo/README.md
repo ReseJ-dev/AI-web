@@ -15,7 +15,7 @@ This directory provides a network-free portfolio presentation for the
 - [`google_sheets/Run Metadata.csv`](<google_sheets/Run Metadata.csv>) previews
   the run audit tab and identifies the fake providers.
 
-The canonical research brief, ten example queries, requested fields, and
+The synthetic portfolio brief, ten illustrative queries, requested fields, and
 ordered sheet columns are defined in
 [`config/demo_shopify_agencies.yaml`](../config/demo_shopify_agencies.yaml).
 The CSV previews deliberately show only a few rows; the JSON fixture contains

@@ -76,8 +76,8 @@ def test_blocked_domains_are_rejected(source: str) -> None:
     assert "blocked" in result.reason
 
 
-def test_exact_approved_domain_does_not_approve_subdomains(tmp_path: Path) -> None:
-    """An exact-domain rule is intentionally limited to that host."""
+def test_exact_approved_domain_treats_www_as_apex_alias(tmp_path: Path) -> None:
+    """The conventional www host shares an apex exact-domain decision."""
     _write_policy_files(tmp_path, approved_exact=["trusted.example"])
     service = SourcePolicyService(tmp_path)
 
@@ -86,7 +86,7 @@ def test_exact_approved_domain_does_not_approve_subdomains(tmp_path: Path) -> No
 
     assert approved.decision is SourcePolicyDecision.APPROVED
     assert "exact-domain rule" in approved.reason
-    assert subdomain.decision is SourcePolicyDecision.MANUAL_REVIEW_REQUIRED
+    assert subdomain.decision is SourcePolicyDecision.APPROVED
 
 
 def test_subdomain_rule_approves_domain_and_descendants(tmp_path: Path) -> None:

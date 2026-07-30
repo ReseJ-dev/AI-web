@@ -3,8 +3,9 @@
 from pathlib import Path
 
 import pytest
+from pydantic import ValidationError
 
-from app.core.settings import Settings
+from app.core.settings import Settings, UiSettings
 
 
 def test_settings_load_from_environment(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -13,6 +14,7 @@ def test_settings_load_from_environment(monkeypatch: pytest.MonkeyPatch) -> None
     monkeypatch.setenv("LOG_LEVEL", "DEBUG")
     monkeypatch.setenv("DATABASE_URL", "sqlite:///:memory:")
     monkeypatch.setenv("SOURCE_POLICY_CONFIG_DIR", "/tmp/policy-config")
+    monkeypatch.setenv("API_ACCESS_TOKEN", "api-secret")
     monkeypatch.setenv("BRAVE_SEARCH_API_KEY", "test-secret")
     monkeypatch.setenv("SEARCH_RESULT_RETENTION_ALLOWED", "true")
     monkeypatch.setenv("LLM_PROVIDER", "fake")
@@ -44,6 +46,7 @@ def test_settings_load_from_environment(monkeypatch: pytest.MonkeyPatch) -> None
     assert settings.log_level == "DEBUG"
     assert settings.database_url == "sqlite:///:memory:"
     assert settings.source_policy_config_dir == Path("/tmp/policy-config")
+    assert settings.api_access_token is not None
     assert settings.brave_search_api_key is not None
     assert settings.brave_search_api_key.get_secret_value() == "test-secret"
     assert settings.search_result_retention_allowed is True
@@ -87,3 +90,26 @@ def test_blank_optional_google_settings_are_unset(
     assert settings.google_service_account_file is None
     assert settings.google_service_account_json is None
     assert settings.google_sheets_spreadsheet_id is None
+
+
+def test_llm_bearer_key_requires_https() -> None:
+    """Bearer credentials are never accepted for a plaintext model endpoint."""
+    with pytest.raises(ValidationError, match="must use HTTPS"):
+        Settings(
+            _env_file=None,
+            llm_api_url="http://llm.example/extract",
+            llm_api_key="secret",
+        )
+
+
+def test_paid_or_mutating_credentials_require_api_access_token() -> None:
+    """Search and Sheets credentials cannot expose unauthenticated mutations."""
+    with pytest.raises(ValidationError, match="API_ACCESS_TOKEN"):
+        Settings(_env_file=None, brave_search_api_key="paid-secret")
+
+
+def test_ui_settings_do_not_define_backend_provider_secrets() -> None:
+    """The Streamlit process has a deliberately narrow environment model."""
+    fields = UiSettings.model_fields
+
+    assert set(fields) == {"api_base_url", "api_access_token"}

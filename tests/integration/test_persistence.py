@@ -108,6 +108,9 @@ def test_sqlalchemy_repositories_round_trip_domain_models() -> None:
         name="Example Commerce",
         website_url="https://example.com/",
         services=["Shopify development"],
+        metadata={
+            "entity_resolution": [{"explanation": ["Registrable domains match."]}]
+        },
     )
     source = SkippedSource(
         research_run_id=run.id,

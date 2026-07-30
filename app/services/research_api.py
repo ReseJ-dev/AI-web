@@ -8,6 +8,7 @@ from typing import Protocol
 from urllib.parse import urlsplit
 from uuid import UUID, uuid4
 
+import structlog
 from pydantic import HttpUrl, ValidationError
 
 from app.api.schemas import (
@@ -45,6 +46,8 @@ from app.repositories import (
 from app.services.query_planner import QueryPlanner
 
 ProgressCallback = Callable[[ResearchProgressEvent], Awaitable[None] | None]
+_MAX_CACHED_RUN_STATES = 100
+_LOGGER = structlog.get_logger(__name__)
 
 
 class ResearchWorkflow(Protocol):
@@ -143,6 +146,7 @@ class ResearchRunApplicationService:
             status=ResearchRunStatus.RUNNING,
         )
         state = _RunState(run=run, input=request)
+        self._prune_terminal_states()
         self._states[run.id] = state
         task = asyncio.create_task(
             self._execute(state),
@@ -294,9 +298,6 @@ class ResearchRunApplicationService:
         sheets_credentials = bool(settings.google_service_account_file) or (
             self._secret_present(settings.google_service_account_json)
         )
-        sheets_target = bool(settings.google_sheets_spreadsheet_id) or (
-            settings.google_sheets_create_allowed
-        )
         providers = [
             ProviderStatus(
                 name="brave_search",
@@ -344,9 +345,8 @@ class ResearchRunApplicationService:
                 enabled=(
                     self._google_sheets_exporter_factory is not None
                     and sheets_credentials
-                    and sheets_target
                 ),
-                configured=sheets_credentials and sheets_target,
+                configured=sheets_credentials,
             ),
         ]
         return ProvidersResponse(providers=providers)
@@ -392,21 +392,25 @@ class ResearchRunApplicationService:
             if result.events:
                 state.latest_progress = result.events[-1]
         except asyncio.CancelledError:
-            state.run = state.run.model_copy(
-                update={
+            state.run = ResearchRun.model_validate(
+                {
+                    **state.run.model_dump(),
                     "status": ResearchRunStatus.CANCELLED,
                     "updated_at": utc_now(),
                 }
             )
+            self._persist_terminal_run(state.run)
             raise
         except Exception:
-            state.run = state.run.model_copy(
-                update={
+            state.run = ResearchRun.model_validate(
+                {
+                    **state.run.model_dump(),
                     "status": ResearchRunStatus.FAILED,
                     "error_message": "The research workflow failed unexpectedly.",
                     "updated_at": utc_now(),
                 }
             )
+            self._persist_terminal_run(state.run)
             state.latest_progress = ResearchProgressEvent(
                 sequence=1,
                 stage=ResearchProgressStage.FAILED,
@@ -421,6 +425,19 @@ class ResearchRunApplicationService:
         stored = self._run_repository.get(run_id) if self._run_repository else None
         if stored is None:
             raise ResearchRunNotFoundError(f"Research run {run_id} was not found.")
+        if stored.status is ResearchRunStatus.RUNNING:
+            stored = ResearchRun.model_validate(
+                {
+                    **stored.model_dump(),
+                    "status": ResearchRunStatus.FAILED,
+                    "error_message": (
+                        "The API restarted before this research run reached a "
+                        "terminal state."
+                    ),
+                    "updated_at": utc_now(),
+                }
+            )
+            self._persist_terminal_run(stored)
         fallback_input = CreateResearchRunRequest(
             topic=stored.request.query,
             requested_fields=stored.request.requested_fields,
@@ -448,6 +465,17 @@ class ResearchRunApplicationService:
         discovered = (
             state.result.candidates_discovered if state.result is not None else 0
         )
+        persisted_company_count = (
+            len(self._company_repository.list_for_run(state.run.id))
+            if not records and self._company_repository is not None
+            else 0
+        )
+        persisted_skipped_count = (
+            len(self._skipped_source_repository.list_for_run(state.run.id))
+            if not skipped_sources and self._skipped_source_repository is not None
+            else 0
+        )
+        completed_count = len(records) or persisted_company_count
         return ResearchRunResponse(
             id=state.run.id,
             status=state.run.status,
@@ -455,11 +483,11 @@ class ResearchRunApplicationService:
             progress_message=progress.message if progress else None,
             completed_items=progress.completed_items or 0 if progress else 0,
             total_items=state.run.request.result_count,
-            partial_result_count=len(records),
+            partial_result_count=completed_count,
             discovered_candidate_count=discovered,
-            approved_candidate_count=len(records),
-            skipped_source_count=len(skipped_sources),
-            completed_result_count=len(records),
+            approved_candidate_count=completed_count,
+            skipped_source_count=len(skipped_sources) or persisted_skipped_count,
+            completed_result_count=completed_count,
             warnings=[self._safe_text(warning) for warning in state.warnings],
             error_message=(
                 "The research workflow failed."
@@ -469,6 +497,35 @@ class ResearchRunApplicationService:
             created_at=state.run.created_at,
             updated_at=state.run.updated_at,
         )
+
+    def _persist_terminal_run(self, run: ResearchRun) -> None:
+        """Best-effort terminal persistence without exposing storage exceptions."""
+        if self._run_repository is None:
+            return
+        try:
+            self._run_repository.update(run)
+        except Exception as error:
+            _LOGGER.error(
+                "terminal_run_persistence_failed",
+                run_id=str(run.id),
+                error_type=type(error).__name__,
+            )
+            return
+
+    def _prune_terminal_states(self) -> None:
+        """Bound process memory when durable repositories can reload old runs."""
+        if self._run_repository is None:
+            return
+        overflow = len(self._states) - _MAX_CACHED_RUN_STATES + 1
+        if overflow <= 0:
+            return
+        terminal_ids = [
+            run_id
+            for run_id, state in self._states.items()
+            if state.run.status is not ResearchRunStatus.RUNNING
+        ]
+        for run_id in terminal_ids[:overflow]:
+            self._states.pop(run_id, None)
 
     def _result_item(
         self,

@@ -130,6 +130,7 @@ class ResearchOrchestrator:
         search_budget: int | None = None,
         search_page_size: int | None = None,
         crawl_page_limit: int | None = None,
+        search_result_retention_allowed: bool | None = None,
     ) -> None:
         settings = get_settings()
         self._search_provider = search_provider
@@ -168,6 +169,11 @@ class ResearchOrchestrator:
             else settings.research_crawl_page_limit
         )
         self._strict_compliance_mode = settings.robots_strict_mode
+        self._retain_search_results = (
+            search_result_retention_allowed
+            if search_result_retention_allowed is not None
+            else settings.search_result_retention_allowed
+        )
         if not 1 <= self._search_budget <= 50:
             raise ValueError("search_budget must be between 1 and 50")
         if not 1 <= self._search_page_size <= 20:
@@ -248,7 +254,9 @@ class ResearchOrchestrator:
                     candidates_discovered += len(candidates)
                 except Exception as error:
                     search_requests_used += 1
-                    warnings.append(f"Search request for {query!r} failed: {error}.")
+                    warnings.append(
+                        f"Search request failed ({self._error_kind(error)})."
+                    )
                     continue
 
                 await self._emit(
@@ -324,7 +332,8 @@ class ResearchOrchestrator:
                     )
                 except Exception as error:
                     warnings.append(
-                        f"Scoring failed for {draft.entity.record.name!r}: {error}."
+                        f"Scoring failed for {draft.entity.record.name!r} "
+                        f"({self._error_kind(error)})."
                     )
 
             scored.sort(
@@ -348,7 +357,8 @@ class ResearchOrchestrator:
                     )
                 except Exception as error:
                     warnings.append(
-                        f"Could not persist {ranked.company.name!r}: {error}."
+                        f"Could not persist {ranked.company.name!r} "
+                        f"({self._error_kind(error)})."
                     )
                     persisted_records.append(ranked)
             ranked_records = persisted_records
@@ -389,7 +399,9 @@ class ResearchOrchestrator:
                         )
                     )
                 except Exception as error:
-                    warnings.append(f"Exporter {format_name!r} failed: {error}.")
+                    warnings.append(
+                        f"Exporter {format_name!r} failed ({self._error_kind(error)})."
+                    )
 
             terminal = (
                 ResearchProgressStage.COMPLETED_WITH_WARNINGS
@@ -405,7 +417,9 @@ class ResearchOrchestrator:
             try:
                 self._run_repository.update(run)
             except Exception as error:
-                warnings.append(f"Could not persist final run status: {error}.")
+                warnings.append(
+                    f"Could not persist final run status ({self._error_kind(error)})."
+                )
                 terminal = ResearchProgressStage.COMPLETED_WITH_WARNINGS
             await self._emit(
                 events,
@@ -431,11 +445,12 @@ class ResearchOrchestrator:
                 candidates_discovered=candidates_discovered,
             )
         except Exception as error:
-            warnings.append(f"Research workflow failed: {error}.")
+            error_kind = self._error_kind(error)
+            warnings.append(f"Research workflow failed ({error_kind}).")
             run = run.model_copy(
                 update={
                     "status": ResearchRunStatus.FAILED,
-                    "error_message": str(error),
+                    "error_message": "The research workflow failed unexpectedly.",
                     "updated_at": utc_now(),
                 }
             )
@@ -443,13 +458,14 @@ class ResearchOrchestrator:
                 self._run_repository.update(run)
             except Exception as persistence_error:
                 warnings.append(
-                    f"Could not persist failed run status: {persistence_error}."
+                    "Could not persist failed run status "
+                    f"({self._error_kind(persistence_error)})."
                 )
             await self._emit(
                 events,
                 warnings,
                 ResearchProgressStage.FAILED,
-                f"Research failed after partial processing: {error}.",
+                f"Research failed after partial processing ({error_kind}).",
                 on_progress,
                 completed_items=len(ranked_records),
                 total_items=validated_request.result_count,
@@ -506,7 +522,7 @@ class ResearchOrchestrator:
             await self._skip(
                 run,
                 original_url,
-                f"Candidate URL normalization failed: {error}.",
+                f"Candidate URL normalization failed ({self._error_kind(error)}).",
                 skipped,
                 warnings,
             )
@@ -551,7 +567,7 @@ class ResearchOrchestrator:
             await self._skip(
                 run,
                 website_url,
-                f"Compliance preflight failed: {error}.",
+                f"Compliance preflight failed ({self._error_kind(error)}).",
                 skipped,
                 warnings,
             )
@@ -582,7 +598,7 @@ class ResearchOrchestrator:
             await self._skip(
                 run,
                 website_url,
-                f"Website crawl failed: {error}.",
+                f"Website crawl failed ({self._error_kind(error)}).",
                 skipped,
                 warnings,
             )
@@ -609,7 +625,7 @@ class ResearchOrchestrator:
             await self._skip(
                 run,
                 website_url,
-                f"Content or structured extraction failed: {error}.",
+                f"Content or structured extraction failed ({self._error_kind(error)}).",
                 skipped,
                 warnings,
             )
@@ -681,7 +697,7 @@ class ResearchOrchestrator:
             except Exception as error:
                 warnings.append(
                     f"{provider.provider_name} enrichment failed for "
-                    f"{website_url}: {error}."
+                    f"{website_url} ({self._error_kind(error)})."
                 )
 
         return _DraftCompany(
@@ -876,10 +892,28 @@ class ResearchOrchestrator:
                 outcome = decision.outcome
                 if outcome is EntityResolutionOutcome.MERGE:
                     merged_record = decision.merged_company
-                    if merged_record is None:
+                    merge_metadata = decision.merge_metadata
+                    if merged_record is None or merge_metadata is None:
                         raise RuntimeError(
-                            "merge outcome did not contain a merged company"
+                            "merge outcome did not contain complete merge audit data"
                         )
+                    existing_history = merged_record.metadata.get(
+                        "entity_resolution", []
+                    )
+                    history = (
+                        list(existing_history)
+                        if isinstance(existing_history, list)
+                        else []
+                    )
+                    history.append(merge_metadata.model_dump(mode="json"))
+                    merged_record = merged_record.model_copy(
+                        update={
+                            "metadata": {
+                                **merged_record.metadata,
+                                "entity_resolution": history,
+                            }
+                        }
+                    )
                     unique[index] = _DraftCompany(
                         CompanyEntity(
                             record=merged_record,
@@ -983,10 +1017,13 @@ class ResearchOrchestrator:
         )
         skipped.append(report)
         warnings.append(f"Skipped {url}: {reason}")
-        try:
-            self._skipped_source_repository.add(report)
-        except Exception as error:
-            warnings.append(f"Could not persist skipped source {url}: {error}.")
+        if self._retain_search_results:
+            try:
+                self._skipped_source_repository.add(report)
+            except Exception as error:
+                warnings.append(
+                    f"Could not persist skipped source ({self._error_kind(error)})."
+                )
 
     @staticmethod
     async def _emit(
@@ -1020,4 +1057,11 @@ class ResearchOrchestrator:
             if inspect.isawaitable(callback_result):
                 await callback_result
         except Exception as error:
-            warnings.append(f"Progress callback failed: {error}.")
+            warnings.append(
+                f"Progress callback failed ({ResearchOrchestrator._error_kind(error)})."
+            )
+
+    @staticmethod
+    def _error_kind(error: BaseException) -> str:
+        """Return a non-secret diagnostic category instead of exception text."""
+        return type(error).__name__

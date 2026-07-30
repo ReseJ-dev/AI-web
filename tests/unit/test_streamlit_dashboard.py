@@ -234,8 +234,11 @@ def test_streamlit_demo_form_is_prepopulated_and_compliance_forward() -> None:
     assert "Google Sheet ID" in text_inputs
     assert app.number_input[0].label == "Required number of results"
     assert app.number_input[0].value == 30
-    assert app.checkbox[0].label == "Strict compliance mode"
-    assert app.checkbox[0].value is True
+    assert not list(app.checkbox)
+    assert any(
+        "Strict compliance mode is enforced by the API server" in item.value
+        for item in app.caption
+    )
     assert app.multiselect[0].value == [
         "Company name",
         "Website",

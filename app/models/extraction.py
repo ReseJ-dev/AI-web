@@ -130,6 +130,9 @@ class CompanyExtraction(BaseModel):
     @model_validator(mode="after")
     def validate_status(self) -> Self:
         """Keep rejection state and its human-readable reasons consistent."""
+        names = [field.name for field in self.fields]
+        if len(names) != len(set(names)):
+            raise ValueError("company extraction field names must be unique")
         if self.status is ExtractionStatus.REJECTED and not self.rejection_reasons:
             raise ValueError("rejected extractions require at least one reason")
         if self.status is ExtractionStatus.ACCEPTED and self.rejection_reasons:

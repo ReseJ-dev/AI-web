@@ -18,6 +18,10 @@ FIELD_OPTIONS = {
     "Relevance score": "relevance_score",
 }
 DEFAULT_FIELDS = list(FIELD_OPTIONS)
+DEFAULT_TOPIC = "Shopify agencies in the Netherlands"
+DEFAULT_RESULT_COUNT = 30
+DEFAULT_COUNTRY_HINT = "Netherlands"
+DEFAULT_LANGUAGE_HINT = "en"
 _COUNTRY_CODES = {
     "belgium": "BE",
     "canada": "CA",

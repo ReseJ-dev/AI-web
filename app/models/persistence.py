@@ -126,6 +126,10 @@ class CompanyRecordRow(Base):
         MutableList.as_mutable(JSON()),
         default=list,
     )
+    record_metadata: Mapped[dict[str, Any]] = mapped_column(
+        MutableDict.as_mutable(JSON()),
+        default=dict,
+    )
     created_at: Mapped[datetime] = mapped_column(UtcDateTime(), default=utc_now)
     updated_at: Mapped[datetime] = mapped_column(
         UtcDateTime(),

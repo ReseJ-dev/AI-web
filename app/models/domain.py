@@ -163,6 +163,7 @@ class CompanyRecord(UtcTimestampedModel):
     description: str | None = None
     services: list[str] = Field(default_factory=list)
     extracted_fields: list[ExtractedField] = Field(default_factory=list)
+    metadata: dict[str, JsonValue] = Field(default_factory=dict)
     created_at: datetime = Field(default_factory=utc_now)
     updated_at: datetime = Field(default_factory=utc_now)
 

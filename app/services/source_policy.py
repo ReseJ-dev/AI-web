@@ -92,8 +92,22 @@ class _RuleMatch:
 
 def _match_rule(domain: str, rules: DomainRuleSet) -> _RuleMatch | None:
     """Find the most specific exact or recursive rule for a domain."""
-    if domain in rules.exact_domains:
-        return _RuleMatch(domain=domain, includes_subdomains=False)
+    aliases = {domain, domain.removeprefix("www.")}
+    aliases.update(
+        item.removeprefix("www.")
+        for item in rules.exact_domains
+        if item.startswith("www.")
+    )
+    exact = next(
+        (
+            rule
+            for rule in rules.exact_domains
+            if rule in aliases or rule.removeprefix("www.") == domain
+        ),
+        None,
+    )
+    if exact is not None:
+        return _RuleMatch(domain=exact, includes_subdomains=False)
 
     for rule in sorted(rules.include_subdomains, key=len, reverse=True):
         if domain == rule or domain.endswith(f".{rule}"):

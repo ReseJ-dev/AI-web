@@ -2,6 +2,7 @@
 
 import os
 import tempfile
+from dataclasses import dataclass
 from pathlib import Path
 from urllib.parse import urljoin
 
@@ -19,6 +20,11 @@ from app.models import (
     ReviewDecision,
 )
 from app.services.domain_normalization import normalize_domain
+from app.services.outbound_safety import (
+    UnsafeOutboundUrlError,
+    ensure_public_http_url,
+    validate_public_http_url,
+)
 from app.services.page_selection import PageSelectionService
 from app.services.robots_policy import RobotsPolicyService
 from app.services.source_policy import (
@@ -43,6 +49,18 @@ class DomainReviewEvidenceError(DomainReviewError):
 
 class DomainReviewConflictError(DomainReviewError):
     """Raised when a requested policy mutation cannot be applied safely."""
+
+
+@dataclass(frozen=True, slots=True)
+class _BoundedReviewResponse:
+    status_code: int
+    headers: dict[str, str]
+    content: bytes
+    oversized: bool
+
+    @property
+    def text(self) -> str:
+        return self.content.decode("utf-8", errors="replace")
 
 
 class _ReviewFile(BaseModel):
@@ -197,15 +215,25 @@ class DomainReviewInspectionService:
         warnings: list[str] = []
         for redirect_index in range(_MAX_REDIRECTS + 1):
             try:
-                response = await self._client.get(
-                    current_url,
-                    headers={
-                        "Accept": "text/html,application/xhtml+xml",
-                        "User-Agent": self._user_agent,
-                    },
-                    timeout=self._timeout_seconds,
-                    follow_redirects=False,
+                validate_public_http_url(current_url)
+                if self._owns_client:
+                    await ensure_public_http_url(current_url)
+            except UnsafeOutboundUrlError:
+                warnings.append(
+                    f"Homepage request stopped because {current_url} did not "
+                    "pass outbound network safety."
                 )
+                return None, current_url, redirects, warnings
+            if redirect_index:
+                redirect_robots = await self._robots.check(current_url)
+                if redirect_robots.decision is not PreflightDecision.APPROVED:
+                    warnings.append(
+                        f"Redirect target {current_url} was not fetched because "
+                        f"robots returned {redirect_robots.decision.value}."
+                    )
+                    return None, current_url, redirects, warnings
+            try:
+                response = await self._bounded_get(current_url)
             except httpx.TransportError:
                 warnings.append(f"Homepage request failed for {current_url}.")
                 return None, current_url, redirects, warnings
@@ -233,7 +261,7 @@ class DomainReviewInspectionService:
                 if not 200 <= response.status_code < 300:
                     warnings.append(f"Homepage returned HTTP {response.status_code}.")
                     return None, current_url, redirects, warnings
-                if len(response.content) > _MAX_INSPECTION_BYTES:
+                if response.oversized:
                     warnings.append("Homepage exceeded the 1 MB inspection limit.")
                     return None, current_url, redirects, warnings
                 content_type = response.headers.get("Content-Type", "").casefold()
@@ -266,15 +294,16 @@ class DomainReviewInspectionService:
         warnings: list[str],
     ) -> str | None:
         try:
-            response = await self._client.get(
-                terms_url,
-                headers={
-                    "Accept": "text/html,application/xhtml+xml",
-                    "User-Agent": self._user_agent,
-                },
-                timeout=self._timeout_seconds,
-                follow_redirects=False,
+            validate_public_http_url(terms_url)
+            if self._owns_client:
+                await ensure_public_http_url(terms_url)
+        except UnsafeOutboundUrlError:
+            warnings.append(
+                f"Terms candidate {terms_url} did not pass outbound network safety."
             )
+            return None
+        try:
+            response = await self._bounded_get(terms_url)
         except httpx.TransportError:
             warnings.append(f"Terms candidate {terms_url} could not be fetched.")
             return None
@@ -283,7 +312,7 @@ class DomainReviewInspectionService:
                 f"Terms candidate {terms_url} returned HTTP {response.status_code}."
             )
             return None
-        if len(response.content) > _MAX_INSPECTION_BYTES:
+        if response.oversized:
             warnings.append(f"Terms candidate {terms_url} exceeded the 1 MB limit.")
             return None
         content_type = response.headers.get("Content-Type", "").casefold()
@@ -296,6 +325,33 @@ class DomainReviewInspectionService:
             )
             return None
         return response.text
+
+    async def _bounded_get(self, url: str) -> _BoundedReviewResponse:
+        """Stream one inert inspection response without buffering beyond 1 MB."""
+        async with self._client.stream(
+            "GET",
+            url,
+            headers={
+                "Accept": "text/html,application/xhtml+xml",
+                "User-Agent": self._user_agent,
+            },
+            timeout=self._timeout_seconds,
+            follow_redirects=False,
+        ) as response:
+            content = bytearray()
+            oversized = False
+            async for chunk in response.aiter_bytes():
+                remaining = _MAX_INSPECTION_BYTES + 1 - len(content)
+                content.extend(chunk[:remaining])
+                if len(content) > _MAX_INSPECTION_BYTES:
+                    oversized = True
+                    break
+            return _BoundedReviewResponse(
+                status_code=response.status_code,
+                headers={key.title(): value for key, value in response.headers.items()},
+                content=bytes(content),
+                oversized=oversized,
+            )
 
     @staticmethod
     def _same_company_domain(reviewed_domain: str, url: str) -> bool:

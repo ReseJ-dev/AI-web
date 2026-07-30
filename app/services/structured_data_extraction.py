@@ -9,6 +9,7 @@ from dataclasses import dataclass
 from typing import Protocol, cast, runtime_checkable
 from urllib.parse import urlsplit, urlunsplit
 
+import tldextract
 from pydantic import JsonValue, ValidationError
 
 from app.core.settings import get_settings
@@ -160,6 +161,7 @@ _SUMMARY_STOPWORDS = frozenset(
     }
 )
 _WORD_TOKEN = re.compile(r"[^\W_]+", re.UNICODE)
+_TLD_EXTRACT = tldextract.TLDExtract(suffix_list_urls=(), cache_dir=None)
 
 _LLM_INSTRUCTIONS = """
 Extract only the requested company fields from the supplied cleaned website text.
@@ -272,6 +274,39 @@ def _compact_fragment(value: object) -> str:
 def _contains_personal_contact(value: str) -> bool:
     """Return whether text contains an email address or phone-like number."""
     return bool(_EMAIL.search(value) or _PHONE.search(value))
+
+
+def _same_registrable_domain(left: str, right: str) -> bool:
+    """Keep website identity metadata within the fetched site's boundary."""
+    try:
+        left_host = urlsplit(left).hostname
+        right_host = urlsplit(right).hostname
+    except ValueError:
+        return False
+    if left_host is None or right_host is None:
+        return False
+    left_parts = _TLD_EXTRACT(left_host.casefold())
+    right_parts = _TLD_EXTRACT(right_host.casefold())
+    left_domain = ".".join(
+        part for part in (left_parts.domain, left_parts.suffix) if part
+    )
+    right_domain = ".".join(
+        part for part in (right_parts.domain, right_parts.suffix) if part
+    )
+    return bool(left_domain and left_domain == right_domain)
+
+
+def _safe_identity_url(value: str, page: ExtractedPageContent) -> bool:
+    """Accept only absolute HTTP URLs belonging to the fetched company site."""
+    try:
+        parsed = urlsplit(value)
+    except ValueError:
+        return False
+    return (
+        parsed.scheme.casefold() in {"http", "https"}
+        and parsed.hostname is not None
+        and _same_registrable_domain(value, str(page.source_url))
+    )
 
 
 def _looks_like_person_name(value: str) -> bool:
@@ -945,16 +980,17 @@ class DeterministicCompanyExtractor:
             candidates.setdefault(candidate.name, []).append(candidate)
 
         for page in pages:
-            add(
-                _candidate(
-                    "website_url",
-                    str(page.canonical_url),
-                    page,
-                    fragment=f"Canonical URL: {page.canonical_url}",
-                    method=ExtractionMethod.CANONICAL_URL,
-                    confidence=0.98,
+            if _safe_identity_url(str(page.canonical_url), page):
+                add(
+                    _candidate(
+                        "website_url",
+                        str(page.canonical_url),
+                        page,
+                        fragment=f"Canonical URL: {page.canonical_url}",
+                        method=ExtractionMethod.CANONICAL_URL,
+                        confidence=0.98,
+                    )
                 )
-            )
             contact = _public_contact_candidate(page)
             if contact is not None:
                 add(
@@ -1023,25 +1059,19 @@ class DeterministicCompanyExtractor:
                         )
                     )
                 organization_url = _direct_json_value(organization, "url")
-                if isinstance(organization_url, str):
-                    try:
-                        parsed_organization_url = urlsplit(organization_url)
-                        if (
-                            parsed_organization_url.scheme in {"http", "https"}
-                            and parsed_organization_url.hostname is not None
-                        ):
-                            add(
-                                _candidate(
-                                    "website_url",
-                                    organization_url,
-                                    page,
-                                    fragment=(f"Organization URL: {organization_url}"),
-                                    method=(ExtractionMethod.JSON_LD_ORGANIZATION),
-                                    confidence=0.95,
-                                )
-                            )
-                    except ValueError:
-                        pass
+                if isinstance(organization_url, str) and _safe_identity_url(
+                    organization_url, page
+                ):
+                    add(
+                        _candidate(
+                            "website_url",
+                            organization_url,
+                            page,
+                            fragment=(f"Organization URL: {organization_url}"),
+                            method=(ExtractionMethod.JSON_LD_ORGANIZATION),
+                            confidence=0.95,
+                        )
+                    )
                 self._requested_json_ld_candidates(
                     add,
                     organization,
@@ -1087,25 +1117,17 @@ class DeterministicCompanyExtractor:
                         )
                     )
             open_graph_url = page.open_graph.get("og:url")
-            if open_graph_url:
-                try:
-                    parsed_open_graph_url = urlsplit(open_graph_url)
-                    if (
-                        parsed_open_graph_url.scheme in {"http", "https"}
-                        and parsed_open_graph_url.hostname is not None
-                    ):
-                        add(
-                            _candidate(
-                                "website_url",
-                                open_graph_url,
-                                page,
-                                fragment=f"Open Graph URL: {open_graph_url}",
-                                method=ExtractionMethod.OPEN_GRAPH,
-                                confidence=0.93,
-                            )
-                        )
-                except ValueError:
-                    pass
+            if open_graph_url and _safe_identity_url(open_graph_url, page):
+                add(
+                    _candidate(
+                        "website_url",
+                        open_graph_url,
+                        page,
+                        fragment=f"Open Graph URL: {open_graph_url}",
+                        method=ExtractionMethod.OPEN_GRAPH,
+                        confidence=0.93,
+                    )
+                )
 
             if (title_name := _title_company_name(page)) and (
                 _plausible_unstructured_company_name(title_name)
@@ -1189,6 +1211,56 @@ class DeterministicCompanyExtractor:
                     )
 
         fields, conflicts = _resolve_candidates(candidates)
+        requested_names = {field.name for field in requested_fields}
+        if "summary" in requested_names and not any(
+            field.name == "summary" for field in fields
+        ):
+            by_name = {field.name: field for field in fields}
+            company_field = by_name.get("company_name")
+            if company_field is not None and isinstance(company_field.value, str):
+                facts: list[str] = []
+                service_field = by_name.get("services")
+                if service_field is not None:
+                    service_values = _string_list(service_field.value)[:3]
+                    if service_values:
+                        facts.append("provides " + ", ".join(service_values))
+                country_field = by_name.get("country")
+                if country_field is not None and isinstance(country_field.value, str):
+                    facts.append(f"is based in {country_field.value}")
+                summary_text = (
+                    f"{company_field.value} " + " and ".join(facts) + "."
+                    if facts
+                    else (
+                        f"{company_field.value} is the company identified by "
+                        "the cited website."
+                    )
+                )
+                support_fields = [
+                    field
+                    for field in (company_field, service_field, country_field)
+                    if field is not None and field.value is not None
+                ]
+                evidence_urls = list(
+                    dict.fromkeys(
+                        url for field in support_fields for url in field.evidence_urls
+                    )
+                )
+                fields.append(
+                    SupportedField(
+                        name="summary",
+                        value=summary_text,
+                        evidence_urls=evidence_urls,
+                        basis=FactBasis.INFERENCE,
+                        evidence_fragment="; ".join(
+                            field.evidence_fragment or f"Supported {field.name}"
+                            for field in support_fields
+                        )[:500],
+                        extraction_method=ExtractionMethod.COMBINED_DETERMINISTIC,
+                        confidence=min(
+                            field.confidence or 0.7 for field in support_fields
+                        ),
+                    )
+                )
         return _finalize(
             fields,
             requested_fields=requested_fields,
@@ -1216,6 +1288,12 @@ class DeterministicCompanyExtractor:
                 organization,
                 *(aliases.get(requested.name, (requested.name,))),
             )
+            if (
+                requested.name in {"website_url", "contact_page_url"}
+                and isinstance(value, str)
+                and not _safe_identity_url(value, page)
+            ):
+                continue
             if value is not None and not isinstance(value, (dict, list)):
                 if isinstance(value, str) and _contains_personal_contact(value):
                     continue

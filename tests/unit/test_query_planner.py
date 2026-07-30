@@ -23,6 +23,24 @@ def test_shopify_netherlands_query_plan() -> None:
     ]
 
 
+def test_complete_demo_topic_does_not_duplicate_location() -> None:
+    """The dashboard topic remains a valid subject instead of repeating its market."""
+    queries = QueryPlanner().plan(
+        "Shopify agencies in the Netherlands",
+        location="Netherlands",
+        city="Amsterdam",
+        country_tld="nl",
+    )
+
+    assert queries == [
+        "Shopify agencies in the Netherlands",
+        "Shopify Plus agency Netherlands",
+        "Shopify development company Netherlands",
+        "Shopify ecommerce agency Amsterdam",
+        "site:.nl Shopify agency",
+    ]
+
+
 def test_query_plan_rejects_invalid_country_tld() -> None:
     """A site filter cannot inject arbitrary search syntax."""
     with pytest.raises(ValueError, match="country_tld"):

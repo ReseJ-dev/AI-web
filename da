@@ -1,0 +1,128 @@
+[1mdiff --git a/.env.example b/.env.example[m
+[1mindex 8225de6..9a4dc5d 100644[m
+[1m--- a/.env.example[m
+[1m+++ b/.env.example[m
+[36m@@ -8,6 +8,10 @@[m [mPOSTGRES_USER=[m
+ POSTGRES_PASSWORD=[m
+ COMPOSE_DATABASE_URL=[m
+ SOURCE_POLICY_CONFIG_DIR=config[m
+[32m+[m[32m# Optional. When set, POST research/export endpoints require this bearer token.[m
+[32m+[m[32mAPI_ACCESS_TOKEN=[m
+[32m+[m[32m# Streamlit-side copy of API_ACCESS_TOKEN; expose only to the UI service.[m
+[32m+[m[32mUI_API_ACCESS_TOKEN=[m
+ BRAVE_SEARCH_API_KEY=[m
+ SEARCH_RESULT_RETENTION_ALLOWED=false[m
+ SEARCH_TIMEOUT_SECONDS=10[m
+[1mdiff --git a/.gitignore b/.gitignore[m
+[1mindex 0a9cf41..a6f7fc4 100644[m
+[1m--- a/.gitignore[m
+[1m+++ b/.gitignore[m
+[36m@@ -19,6 +19,8 @@[m [mbuild/[m
+ # Local configuration and data[m
+ .env[m
+ .env.docker[m
+[32m+[m[32m.secrets/*[m
+[32m+[m[32m!.secrets/.gitkeep[m
+ data/[m
+ *.db[m
+ *.sqlite3[m
+[1mdiff --git a/README.md b/README.md[m
+[1mindex fa3d1be..d42c518 100644[m
+[1m--- a/README.md[m
+[1m+++ b/README.md[m
+[36m@@ -14,8 +14,9 @@[m [mwith evidence, deduplicated, scored consistently, and accompanied by a report[m
+ of sources that could not safely be used.[m
+ [m
+ This project models that complete workflow. Search results are discovery hints,[m
+[31m-not facts. Only independently validated company records reach the database or[m
+[31m-an export. Failures are isolated per domain, allowing a run to complete with[m
+[32m+[m[32mnot facts. Only site-verified, evidence-bearing company records reach the[m
+[32m+[m[32mdatabase or an export; this validates provenance, not the truth of a company's[m
+[32m+[m[32mown claims. Failures are isolated per domain, allowing a run to complete with[m
+ partial results and explicit warnings.[m
+ [m
+ ## Problem statement[m
+[36m@@ -78,8 +79,9 @@[m [mThe Streamlit client submits a validated brief to FastAPI and polls a background[m
+ research run. `ResearchOrchestrator` plans queries, keeps discovered candidates[m
+ transient, and advances each likely official website through policy, crawling,[m
+ content, extraction, enrichment, resolution, and scoring stages. Repository[m
+[31m-interfaces persist only final verified records, run state, and skipped-source[m
+[31m-reports. Exporters transform that persisted result into delivery formats.[m
+[32m+[m[32minterfaces persist final verified records and run state. Skipped candidate URLs[m
+[32m+[m[32mare persisted only when `SEARCH_RESULT_RETENTION_ALLOWED=true`. Relevance,[m
+[32m+[m[32mwarnings, progress events, and export context remain process-local.[m
+ [m
+ Progress events expose `planning`, `searching`, `validating`,[m
+ `checking_compliance`, `crawling`, `extracting`, `enriching`,[m
+[36m@@ -157,7 +159,7 @@[m [mis ignored by Git and must contain only local values.[m
+ [m
+ | Area | Variables | Purpose |[m
+ | --- | --- | --- |[m
+[31m-| Runtime | `APP_ENV`, `LOG_LEVEL`, `PROJECT_USER_AGENT` | Environment, structured-log level, and descriptive network identity |[m
+[32m+[m[32m| Runtime | `APP_ENV`, `LOG_LEVEL`, `PROJECT_USER_AGENT`, `API_ACCESS_TOKEN` | Environment, structured-log level, descriptive network identity, and optional write-endpoint bearer authentication |[m
+ | Database | `DATABASE_URL` | SQLAlchemy SQLite or PostgreSQL connection URL |[m
+ | Docker database | `POSTGRES_DB`, `POSTGRES_USER`, `POSTGRES_PASSWORD`, `COMPOSE_DATABASE_URL` | Runtime-only Compose database initialization and API connection |[m
+ | Source policy | `SOURCE_POLICY_CONFIG_DIR`, `ROBOTS_STRICT_MODE`, `ROBOTS_CACHE_TTL_SECONDS`, `COMPLIANCE_HTTP_TIMEOUT_SECONDS`, `TERMS_MAX_DOCUMENTS` | Policy files and compliance behavior |[m
+[36m@@ -166,11 +168,12 @@[m [mis ignored by Git and must contain only local values.[m
+ | Research and crawl | `RESEARCH_SEARCH_BUDGET`, `RESEARCH_SEARCH_PAGE_SIZE`, `RESEARCH_CRAWL_PAGE_LIMIT`, `CRAWLER_REQUEST_DELAY_SECONDS`, `CRAWLER_MAX_RESPONSE_BYTES`, `CRAWLER_TIMEOUT_SECONDS` | Work budgets and crawler limits |[m
+ | Enrichment | `OPENCORPORATES_*`, `WIKIDATA_*`, `GEONAMES_*` | Optional official enrichment endpoints, licensing gates, retry, and cache settings |[m
+ | Google Sheets | `GOOGLE_SERVICE_ACCOUNT_FILE`, `GOOGLE_SERVICE_ACCOUNT_JSON`, `GOOGLE_SHEETS_*` | Service-account credentials, target sheet, creation permission, and retries |[m
+[31m-| UI and live tests | `UI_API_BASE_URL`, `RUN_LIVE_WEBSITE_SMOKE_TESTS` | Dashboard API endpoint and explicit live-test opt-in |[m
+[32m+[m[32m| UI and live tests | `UI_API_BASE_URL`, `UI_API_ACCESS_TOKEN`, `RUN_LIVE_WEBSITE_SMOKE_TESTS` | Dashboard API endpoint, matching optional API bearer token, and explicit live-test opt-in |[m
+ [m
+ Blank optional credentials disable their providers. Keep secrets in `.env`, CI[m
+ secrets, or a deployment secret manager; they are never required in an image[m
+[31m-or committed configuration.[m
+[32m+[m[32mor committed configuration. `API_ACCESS_TOKEN` is mandatory when Brave Search[m
+[32m+[m[32mor Google service-account credentials are configured.[m
+ [m
+ ## Local development[m
+ [m
+[36m@@ -237,8 +240,12 @@[m [mpostgresql+psycopg://<url-encoded-user>:<url-encoded-password>@postgres:5432/<da[m
+ The values belong only in the git-ignored `.env` file or your runtime secret[m
+ store; do not add them to an image or commit them. Provider credentials can[m
+ also be supplied through the same local environment file and are passed only[m
+[31m-to the API service. Streamlit receives only its API URL and non-secret runtime[m
+[31m-settings.[m
+[32m+[m[32mto the API service. Streamlit receives only its API URL and optional API access[m
+[32m+[m[32mtoken, never search, LLM, enrichment, database, or Google credentials.[m
+[32m+[m
+[32m+[m[32mFor file-based Google credentials, place the ignored JSON file under[m
+[32m+[m[32m`.secrets/` and set `GOOGLE_SERVICE_ACCOUNT_FILE` to its container path, for[m
+[32m+[m[32mexample `/run/secrets/google-service-account.json`.[m
+ [m
+ Build and start the development stack:[m
+ [m
+[36m@@ -298,6 +305,10 @@[m [mcurl -X POST http://localhost:8000/api/research-runs \[m
+   }'[m
+ ```[m
+ [m
+[32m+[m[32mIf `API_ACCESS_TOKEN` is configured, add[m
+[32m+[m[32m`-H 'Authorization: Bearer <your-token>'`. Set the matching[m
+[32m+[m[32m`UI_API_ACCESS_TOKEN` for Streamlit.[m
+[32m+[m
+ Poll the returned run ID and then request[m
+ `GET /api/research-runs/{run_id}/results`. An illustrative response is shown[m
+ below; the `.example` company is fictional and is not an endorsement or a[m
+[36m@@ -343,8 +354,9 @@[m [mcaptured live result.[m
+ [m
+ Each extracted value is admitted only when the extractor can associate it with[m
+ allowed evidence. The compact API response returns the combined evidence URL[m
+[31m-set; internal extraction models retain field-level attribution, confidence,[m
+[31m-method, and compact evidence fragments.[m
+[32m+[m[32mset. Runtime extraction models retain field-level attribution, confidence,[m
+[32m+[m[32mmethod, and compact evidence fragments; persistence currently retains values,[m
+[32m+[m[32mconfidence, evidence URLs, and compact excerpts, but not basis/method enums.[m
+ [m
+ Every response includes `X-Request-ID`; a safe caller-provided value is[m
+ preserved. Validation, missing-run, lifecycle-conflict, provider, and internal[m
+[36m@@ -385,15 +397,15 @@[m [mprovider credentials. Set `UI_API_BASE_URL` when FastAPI is not available at[m
+ `http://localhost:8000`, then run `make run-ui`.[m
+ [m
+ The prepopulated Shopify-agency demo includes topic, count, country and language[m
+[31m-hints, output-field selection, strict compliance mode, and an optional Google[m
+[31m-Sheet ID. During a run, the dashboard polls progress and displays discovered,[m
+[32m+[m[32mhints, output-field selection, a server-enforced strict-compliance notice, and[m
+[32m+[m[32man optional Google Sheet ID. During a run, the dashboard polls progress and displays discovered,[m
+ approved, skipped, and completed counts. Terminal and partial results support a[m
+ relevance threshold, safe CSV 

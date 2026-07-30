@@ -3,13 +3,17 @@
 import asyncio
 import time
 from collections.abc import Mapping, Sequence
+from pathlib import Path
 from typing import Any, cast
 from uuid import UUID
 
 from fastapi.testclient import TestClient
+from sqlalchemy.orm import sessionmaker
 
+from app.api.dependencies import _google_exporter_factory
 from app.api.main import create_app
-from app.core.settings import Settings
+from app.core.database import create_database_engine
+from app.core.settings import Settings, reload_settings
 from app.exporters import ResultExporter
 from app.models import (
     CompanyRecord,
@@ -30,6 +34,12 @@ from app.models import (
     SkippedSource,
 )
 from app.models.domain import utc_now
+from app.models.persistence import Base
+from app.repositories import (
+    SqlAlchemyCompanyRecordRepository,
+    SqlAlchemyResearchRunRepository,
+    SqlAlchemySkippedSourceRepository,
+)
 from app.services.research_api import ProgressCallback, ResearchRunApplicationService
 
 REQUEST_BODY = {
@@ -348,6 +358,19 @@ def test_google_sheets_export_uses_terminal_run_context() -> None:
         assert exporter.requested_spreadsheet_id == "portfolio-sheet-123"
 
 
+def test_google_factory_allows_per_request_target_without_server_default() -> None:
+    """Credentials alone make the user-supplied spreadsheet path available."""
+    settings = Settings(
+        _env_file=None,
+        api_access_token="portfolio-api-secret",
+        google_service_account_json='{"type":"service_account"}',
+        google_sheets_spreadsheet_id=None,
+        google_sheets_create_allowed=False,
+    )
+
+    assert _google_exporter_factory(settings) is not None
+
+
 def test_structured_errors_request_ids_and_export_conflict() -> None:
     """Validation, missing resources, and lifecycle conflicts share one envelope."""
     with _client(_FakeWorkflow(delay=0.1), exporter=_FakeSheetsExporter()) as client:
@@ -404,11 +427,80 @@ def test_unconfigured_workflow_returns_structured_service_unavailable() -> None:
     assert response.headers["X-Request-ID"]
 
 
+def test_mutating_endpoints_require_configured_bearer_token(
+    monkeypatch: Any,
+) -> None:
+    """Paid or externally mutating operations are protected when configured."""
+    monkeypatch.setenv("API_ACCESS_TOKEN", "portfolio-api-secret")
+    reload_settings()
+    try:
+        with _client(_FakeWorkflow()) as client:
+            unauthorized = client.post("/api/research-runs", json=REQUEST_BODY)
+            authorized = client.post(
+                "/api/research-runs",
+                json=REQUEST_BODY,
+                headers={"Authorization": "Bearer portfolio-api-secret"},
+            )
+        assert unauthorized.status_code == 401
+        assert unauthorized.json()["error"]["code"] == "http_error"
+        assert authorized.status_code == 202
+    finally:
+        monkeypatch.delenv("API_ACCESS_TOKEN")
+        reload_settings()
+
+
+def test_restart_marks_orphaned_run_failed_and_keeps_persisted_results(
+    tmp_path: Path,
+) -> None:
+    """A process restart cannot leave a durable run permanently in progress."""
+    engine = create_database_engine(f"sqlite+pysqlite:///{tmp_path / 'restart.db'}")
+    Base.metadata.create_all(engine)
+    sessions = sessionmaker(bind=engine, expire_on_commit=False)
+    runs = SqlAlchemyResearchRunRepository(sessions)
+    companies = SqlAlchemyCompanyRecordRepository(sessions)
+    skipped = SqlAlchemySkippedSourceRepository(sessions)
+    run = ResearchRun(
+        request=ResearchRequest(
+            query="Shopify agencies",
+            requested_fields=[{"name": "company_name"}],
+            result_count=1,
+        ),
+        status=ResearchRunStatus.RUNNING,
+    )
+    runs.add(run)
+    companies.add(
+        CompanyRecord(
+            research_run_id=run.id,
+            name="Persisted Studio",
+            website_url="https://persisted.example/",
+        )
+    )
+    service = ResearchRunApplicationService(
+        workflow=None,
+        run_repository=runs,
+        company_repository=companies,
+        skipped_source_repository=skipped,
+        settings=Settings(_env_file=None),
+    )
+
+    with TestClient(create_app(service)) as client:
+        status_response = client.get(f"/api/research-runs/{run.id}")
+        results_response = client.get(f"/api/research-runs/{run.id}/results")
+
+    stored = runs.get(run.id)
+    assert status_response.json()["status"] == "failed"
+    assert status_response.json()["completed_result_count"] == 1
+    assert results_response.json()["items"][0]["company_name"] == "Persisted Studio"
+    assert stored is not None
+    assert stored.status is ResearchRunStatus.FAILED
+
+
 def test_provider_config_health_and_openapi_never_expose_keys(
     monkeypatch: Any,
 ) -> None:
     """Configuration is boolean-only and OpenAPI documents all required routes."""
     monkeypatch.setenv("BRAVE_SEARCH_API_KEY", "brave-private")
+    monkeypatch.setenv("API_ACCESS_TOKEN", "portfolio-api-secret")
     monkeypatch.setenv("LLM_PROVIDER", "http")
     monkeypatch.setenv("LLM_API_URL", "https://llm.example/v1")
     monkeypatch.setenv("LLM_API_KEY", "llm-private")
@@ -423,7 +515,11 @@ def test_provider_config_health_and_openapi_never_expose_keys(
         assert "llm-private" not in providers.text
         assert all("api_key" not in item for item in providers.json()["providers"])
 
-        run_id = client.post("/api/research-runs", json=REQUEST_BODY).json()["id"]
+        run_id = client.post(
+            "/api/research-runs",
+            json=REQUEST_BODY,
+            headers={"Authorization": "Bearer portfolio-api-secret"},
+        ).json()["id"]
         terminal = _wait_for_terminal(client, run_id)
         assert "brave-private" not in str(terminal)
         assert "[REDACTED]" in str(terminal)

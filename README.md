@@ -14,8 +14,9 @@ with evidence, deduplicated, scored consistently, and accompanied by a report
 of sources that could not safely be used.
 
 This project models that complete workflow. Search results are discovery hints,
-not facts. Only independently validated company records reach the database or
-an export. Failures are isolated per domain, allowing a run to complete with
+not facts. Only site-verified, evidence-bearing company records reach the
+database or an export; this validates provenance, not the truth of a company's
+own claims. Failures are isolated per domain, allowing a run to complete with
 partial results and explicit warnings.
 
 ## Problem statement
@@ -78,8 +79,9 @@ The Streamlit client submits a validated brief to FastAPI and polls a background
 research run. `ResearchOrchestrator` plans queries, keeps discovered candidates
 transient, and advances each likely official website through policy, crawling,
 content, extraction, enrichment, resolution, and scoring stages. Repository
-interfaces persist only final verified records, run state, and skipped-source
-reports. Exporters transform that persisted result into delivery formats.
+interfaces persist final verified records and run state. Skipped candidate URLs
+are persisted only when `SEARCH_RESULT_RETENTION_ALLOWED=true`. Relevance,
+warnings, progress events, and export context remain process-local.
 
 Progress events expose `planning`, `searching`, `validating`,
 `checking_compliance`, `crawling`, `extracting`, `enriching`,
@@ -157,7 +159,7 @@ is ignored by Git and must contain only local values.
 
 | Area | Variables | Purpose |
 | --- | --- | --- |
-| Runtime | `APP_ENV`, `LOG_LEVEL`, `PROJECT_USER_AGENT` | Environment, structured-log level, and descriptive network identity |
+| Runtime | `APP_ENV`, `LOG_LEVEL`, `PROJECT_USER_AGENT`, `API_ACCESS_TOKEN` | Environment, structured-log level, descriptive network identity, and optional write-endpoint bearer authentication |
 | Database | `DATABASE_URL` | SQLAlchemy SQLite or PostgreSQL connection URL |
 | Docker database | `POSTGRES_DB`, `POSTGRES_USER`, `POSTGRES_PASSWORD`, `COMPOSE_DATABASE_URL` | Runtime-only Compose database initialization and API connection |
 | Source policy | `SOURCE_POLICY_CONFIG_DIR`, `ROBOTS_STRICT_MODE`, `ROBOTS_CACHE_TTL_SECONDS`, `COMPLIANCE_HTTP_TIMEOUT_SECONDS`, `TERMS_MAX_DOCUMENTS` | Policy files and compliance behavior |
@@ -166,11 +168,12 @@ is ignored by Git and must contain only local values.
 | Research and crawl | `RESEARCH_SEARCH_BUDGET`, `RESEARCH_SEARCH_PAGE_SIZE`, `RESEARCH_CRAWL_PAGE_LIMIT`, `CRAWLER_REQUEST_DELAY_SECONDS`, `CRAWLER_MAX_RESPONSE_BYTES`, `CRAWLER_TIMEOUT_SECONDS` | Work budgets and crawler limits |
 | Enrichment | `OPENCORPORATES_*`, `WIKIDATA_*`, `GEONAMES_*` | Optional official enrichment endpoints, licensing gates, retry, and cache settings |
 | Google Sheets | `GOOGLE_SERVICE_ACCOUNT_FILE`, `GOOGLE_SERVICE_ACCOUNT_JSON`, `GOOGLE_SHEETS_*` | Service-account credentials, target sheet, creation permission, and retries |
-| UI and live tests | `UI_API_BASE_URL`, `RUN_LIVE_WEBSITE_SMOKE_TESTS` | Dashboard API endpoint and explicit live-test opt-in |
+| UI and live tests | `UI_API_BASE_URL`, `UI_API_ACCESS_TOKEN`, `RUN_LIVE_WEBSITE_SMOKE_TESTS` | Dashboard API endpoint, matching optional API bearer token, and explicit live-test opt-in |
 
 Blank optional credentials disable their providers. Keep secrets in `.env`, CI
 secrets, or a deployment secret manager; they are never required in an image
-or committed configuration.
+or committed configuration. `API_ACCESS_TOKEN` is mandatory when Brave Search
+or Google service-account credentials are configured.
 
 ## Local development
 
@@ -237,8 +240,12 @@ postgresql+psycopg://<url-encoded-user>:<url-encoded-password>@postgres:5432/<da
 The values belong only in the git-ignored `.env` file or your runtime secret
 store; do not add them to an image or commit them. Provider credentials can
 also be supplied through the same local environment file and are passed only
-to the API service. Streamlit receives only its API URL and non-secret runtime
-settings.
+to the API service. Streamlit receives only its API URL and optional API access
+token, never search, LLM, enrichment, database, or Google credentials.
+
+For file-based Google credentials, place the ignored JSON file under
+`.secrets/` and set `GOOGLE_SERVICE_ACCOUNT_FILE` to its container path, for
+example `/run/secrets/google-service-account.json`.
 
 Build and start the development stack:
 
@@ -298,6 +305,10 @@ curl -X POST http://localhost:8000/api/research-runs \
   }'
 ```
 
+If `API_ACCESS_TOKEN` is configured, add
+`-H 'Authorization: Bearer <your-token>'`. Set the matching
+`UI_API_ACCESS_TOKEN` for Streamlit.
+
 Poll the returned run ID and then request
 `GET /api/research-runs/{run_id}/results`. An illustrative response is shown
 below; the `.example` company is fictional and is not an endorsement or a
@@ -343,8 +354,9 @@ captured live result.
 
 Each extracted value is admitted only when the extractor can associate it with
 allowed evidence. The compact API response returns the combined evidence URL
-set; internal extraction models retain field-level attribution, confidence,
-method, and compact evidence fragments.
+set. Runtime extraction models retain field-level attribution, confidence,
+method, and compact evidence fragments; persistence currently retains values,
+confidence, evidence URLs, and compact excerpts, but not basis/method enums.
 
 Every response includes `X-Request-ID`; a safe caller-provided value is
 preserved. Validation, missing-run, lifecycle-conflict, provider, and internal
@@ -385,15 +397,15 @@ provider credentials. Set `UI_API_BASE_URL` when FastAPI is not available at
 `http://localhost:8000`, then run `make run-ui`.
 
 The prepopulated Shopify-agency demo includes topic, count, country and language
-hints, output-field selection, strict compliance mode, and an optional Google
-Sheet ID. During a run, the dashboard polls progress and displays discovered,
+hints, output-field selection, a server-enforced strict-compliance notice, and
+an optional Google Sheet ID. During a run, the dashboard polls progress and displays discovered,
 approved, skipped, and completed counts. Terminal and partial results support a
 relevance threshold, safe CSV download, Google Sheets export, skipped-source
 audit details, and validation warnings.
 
-The demo requires strict compliance mode. Blocked or ambiguous websites are
-skipped; these automated controls are operational risk signals and do not
-provide legal advice.
+The API server enforces strict compliance mode for the demo. Blocked or
+ambiguous websites are skipped; these automated controls are operational risk
+signals and do not provide legal advice.
 
 ## Screenshots
 
@@ -401,9 +413,9 @@ provide legal advice.
 
 ![Streamlit research dashboard prepopulated with the Shopify agencies example](docs/screenshots/streamlit-dashboard.png)
 
-The real application screenshot shows the prepopulated portfolio brief,
-requested output fields, strict-compliance control, and optional Google Sheet
-target. During an active run, the same dashboard adds progress counters,
+The screenshot shows the original prepopulated portfolio brief and optional
+Google Sheet target; the current UI replaces the former checkbox with a
+server-enforced strict-compliance notice. During an active run, the dashboard adds progress counters,
 results and skipped-source tables, relevance filtering, warnings, CSV download,
 and Google Sheets export controls.
 
@@ -437,8 +449,9 @@ legal advice.
 
 Source decisions are configured in `config/approved_domains.yaml`,
 `config/blocked_domains.yaml`, and `config/source_policies.yaml`. Exact rules
-match only one host, while `include_subdomains` rules match both the configured
-host and its descendants. Candidate and unknown domains require manual review.
+match the apex/`www` host pair, while `include_subdomains` rules match both the
+configured host and all descendants. Candidate and unknown domains require
+manual review.
 
 Set `SOURCE_POLICY_CONFIG_DIR` to load policy files from another directory.
 Configuration changes can be applied at runtime with
@@ -452,12 +465,14 @@ offline development can use `FakeSearchProvider`.
 
 Brave search candidates are transient process-memory objects. Raw API responses
 and search snippets are never persisted, and the candidate model intentionally
-has no snippet field. `SEARCH_RESULT_RETENTION_ALLOWED` defaults to `false`.
+has no snippet field. Candidate-derived skipped URLs also remain in memory
+while `SEARCH_RESULT_RETENTION_ALLOWED=false`, which is the default.
 
 Persistent retention of Brave Search results requires a subscription or
 agreement that explicitly grants storage rights. Setting
-`SEARCH_RESULT_RETENTION_ALLOWED=true` does not itself grant those rights and
-does not enable a persistence implementation. Confirm applicable rights under
+`SEARCH_RESULT_RETENTION_ALLOWED=true` permits persistence of candidate-derived
+skipped-source URLs; it never persists raw responses or snippets and does not
+itself grant storage rights. Confirm applicable rights under
 the [Brave Search API terms](https://api-dashboard.search.brave.com/documentation/resources/terms-of-service)
 and your plan before adding any storage path.
 
@@ -505,10 +520,11 @@ facts and uses model output only to fill unsupported fields. Every non-null
 field records whether it is explicit or inferred and cites its evidence URLs;
 required fields without evidence reject the extraction.
 
-`DeterministicCompanyExtractor` resolves company name, canonical website,
+`DeterministicCompanyExtractor` resolves company name, same-site canonical website,
 possible country, services, and a public business contact-page URL from
 Organization JSON-LD, canonical metadata, titles, meta and Open Graph values,
-headings, and service sections. Each deterministic value carries a compact
+headings, and service sections. Cross-domain identity metadata is ignored, and
+a requested summary is composed only from supported deterministic facts. Each deterministic value carries a compact
 sanitized evidence fragment, extraction method, confidence, and source URL.
 Equally authoritative conflicts are rejected rather than selected by page
 order. Employee fields, person-like page identities, email addresses, phone
@@ -572,17 +588,18 @@ deterministic application code.
 transient search, source filtering, compliance preflight, crawling, page
 selection, structured extraction, optional enrichment, deduplication,
 deterministic scoring, persistence, and optional export. Search continues until
-the requested independently verified record count is reached or
+the requested site-verified record count is reached or
 `RESEARCH_SEARCH_BUDGET` is exhausted.
 
 The crawler, OpenCorporates/Wikidata/GeoNames enrichment providers, and result
 exporters are replaceable asynchronous interfaces. Only configured, injected
-providers run. Search candidates remain transient; final verified records and
-skipped-source reports use repository interfaces.
+providers run. Search candidates remain transient; final verified records use
+repository interfaces. Skipped-source persistence is gated by the explicit
+search-result retention setting.
 
 `OpenCorporatesProvider` uses only the official JSON API for company
 verification and enrichment; it never fetches or scrapes OpenCorporates HTML
-pages. It keeps the independently verified website identity unchanged and adds
+pages. It keeps the site-verified website identity unchanged and adds
 only unoccupied official-name, jurisdiction, company-number, status, registered
 location, and registry-URL fields. Every added value cites the OpenCorporates
 company URL and carries OpenCorporates and registry-publisher attribution.
@@ -595,7 +612,7 @@ exponential retry, and maximum `Retry-After` behavior are configurable.
 
 `WikidataProvider` queries the official Wikidata SPARQL endpoint with the
 configured project user agent. An entity is accepted only when its exact
-label/alias result includes an official website matching the independently
+label/alias result includes an official website matching the site-verified
 verified company site. Wikidata identity, website corroboration, country,
 headquarters, and industry values cite the entity page and carry Wikidata
 attribution. Conflicting or ambiguous values produce warnings and never replace
@@ -609,7 +626,7 @@ for `GEONAMES_CACHE_TTL_SECONDS`. Set `GEONAMES_USERNAME` to an application
 account; the documented `demo` account is not used. Every geographic addition
 links to GeoNames and retains GeoNames attribution.
 
-Progress callbacks receive ordered pipeline events, including a distinct
+Process-local progress callbacks receive ordered pipeline events, including a distinct
 `enriching` stage for configured providers, followed by `completed`,
 `completed_with_warnings`, or `failed`. Candidate-level compliance, crawl,
 extraction, enrichment, persistence, and export failures are isolated and
@@ -765,6 +782,12 @@ paid APIs or public websites.
   company status, and provider datasets can later change.
 - API background work is process-local rather than managed by a durable
   distributed task queue, which limits horizontal scaling and restart recovery.
+  A restored `running` row is marked failed conservatively; persisted company
+  and skipped-source rows remain readable, but relevance details, progress,
+  locale context, warnings, and Google export context are not restart-safe.
+- The optional `API_ACCESS_TOKEN` is one deployment bearer token, not a
+  multi-user authorization or quota system. Configure it before exposing write
+  endpoints outside a trusted local environment.
 - The included migration workflow validates SQLite in CI. PostgreSQL is
   supported by the models and Docker environment but should also be exercised
   in deployment-specific integration tests.

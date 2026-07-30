@@ -8,7 +8,7 @@ from collections.abc import Awaitable, Callable
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from email.utils import parsedate_to_datetime
-from typing import Protocol
+from typing import Protocol, runtime_checkable
 from urllib.parse import parse_qsl, unquote, urljoin, urlsplit, urlunsplit
 
 import httpx
@@ -19,6 +19,11 @@ from app.core.settings import get_settings
 from app.models.compliance import CompliancePreflightResult, PreflightDecision
 from app.models.orchestration import CrawledPage, CrawlResult
 from app.services.domain_normalization import InvalidDomainError, normalize_domain
+from app.services.outbound_safety import (
+    UnsafeOutboundUrlError,
+    ensure_public_http_url,
+    validate_public_http_url,
+)
 
 Sleep = Callable[[float], Awaitable[None]]
 Monotonic = Callable[[], float]
@@ -110,7 +115,10 @@ _CHALLENGE_PATTERNS = (
     re.compile(r"bot[- ]protection", re.IGNORECASE),
     re.compile(r"automated access (?:has been )?(?:blocked|denied)", re.IGNORECASE),
 )
-_PUBLIC_SUFFIX_EXTRACTOR = tldextract.TLDExtract(suffix_list_urls=())
+_PUBLIC_SUFFIX_EXTRACTOR = tldextract.TLDExtract(
+    cache_dir=None,
+    suffix_list_urls=(),
+)
 
 
 class ComplianceChecker(Protocol):
@@ -118,6 +126,15 @@ class ComplianceChecker(Protocol):
 
     async def check(self, target_url: str) -> CompliancePreflightResult:
         """Return whether the exact target may be fetched."""
+        ...
+
+
+@runtime_checkable
+class PrefetchedContentProvider(Protocol):
+    """Optional one-use transfer of content already fetched during preflight."""
+
+    def take_prefetched_content(self, target_url: str) -> str | None:
+        """Return and remove approved transient HTML for an exact URL."""
         ...
 
 
@@ -324,6 +341,27 @@ class AsyncWebsiteCrawler:
                     f"The {qualifier} was not approved: {preflight.reason}"
                 )
 
+            if isinstance(self._compliance_preflight, PrefetchedContentProvider):
+                prefetched = self._compliance_preflight.take_prefetched_content(
+                    current_url
+                )
+                if prefetched is not None:
+                    if len(prefetched.encode("utf-8")) > self._max_response_bytes:
+                        raise CrawlResponseTooLargeError(
+                            "The preflight response exceeds the configured limit."
+                        )
+                    if self._contains_bot_challenge(prefetched):
+                        raise CrawlBlockedError(
+                            "A CAPTCHA, Cloudflare challenge, or bot-protection "
+                            "page stopped the crawl."
+                        )
+                    return _FetchedContent(
+                        url=current_url,
+                        status_code=200,
+                        text=prefetched,
+                        content_type="text/html",
+                    )
+
             opened = await self._request(current_url)
             response = opened.response
             if response.status_code in _REDIRECT_STATUSES:
@@ -345,6 +383,12 @@ class AsyncWebsiteCrawler:
 
     async def _request(self, url: str) -> _OpenResponse:
         """Issue one pooled, throttled GET without redirect following."""
+        try:
+            validate_public_http_url(url)
+            if self._owns_client:
+                await ensure_public_http_url(url)
+        except UnsafeOutboundUrlError as error:
+            raise CrawlComplianceError(str(error)) from error
         domain = self._domain_key(url)
         state = self._domain_states.setdefault(domain, _DomainState())
         await state.semaphore.acquire()

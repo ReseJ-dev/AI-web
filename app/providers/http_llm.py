@@ -68,6 +68,10 @@ class ConfigurableHttpLLMProvider:
             raise LLMProviderConfigurationError(
                 "LLM_API_URL must be an absolute HTTP(S) URL"
             )
+        if self._api_key and parsed_url.scheme != "https":
+            raise LLMProviderConfigurationError(
+                "LLM_API_URL must use HTTPS when an API key is configured"
+            )
         if not 0 < self._timeout_seconds <= 120:
             raise ValueError("timeout_seconds must be between 0 and 120")
         if not 0 <= self._max_retries <= 5:

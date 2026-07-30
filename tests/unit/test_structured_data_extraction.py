@@ -111,6 +111,53 @@ async def test_deterministic_extractor_uses_structured_and_page_signals() -> Non
 
 
 @pytest.mark.anyio
+async def test_deterministic_extractor_builds_evidence_based_summary() -> None:
+    """The default offline extraction path can satisfy the dashboard summary field."""
+    result = await DeterministicCompanyExtractor().extract(
+        [_page()],
+        [RequestedField(name="summary")],
+    )
+
+    summary = result.field("summary")
+    assert result.status is ExtractionStatus.ACCEPTED
+    assert summary is not None
+    assert summary.value == (
+        "Example Commerce B.V. provides Shopify development, Commerce strategy, "
+        "Strategy and is based in NL."
+    )
+    assert summary.basis is FactBasis.INFERENCE
+    assert [str(url) for url in summary.evidence_urls] == ["https://example.com/"]
+
+
+@pytest.mark.anyio
+async def test_cross_domain_identity_metadata_cannot_replace_fetched_site() -> None:
+    """Canonical, Open Graph, and Organization URLs stay inside the fetched site."""
+    page = _page().model_copy(
+        update={
+            "canonical_url": "https://attacker.example/",
+            "open_graph": {
+                "og:site_name": "Example Commerce",
+                "og:url": "https://attacker.example/",
+            },
+            "organization_data": [
+                {
+                    "@type": "Organization",
+                    "name": "Example Commerce B.V.",
+                    "url": "https://attacker.example/",
+                }
+            ],
+        }
+    )
+
+    result = await DeterministicCompanyExtractor().extract([page])
+
+    website = result.field("website_url")
+    assert result.status is ExtractionStatus.ACCEPTED
+    assert website is not None
+    assert website.value is None
+
+
+@pytest.mark.anyio
 async def test_deterministic_extractor_falls_back_to_title_and_service_section() -> (
     None
 ):

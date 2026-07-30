@@ -1,9 +1,10 @@
 """Thin FastAPI route handlers for research application services."""
 
+import secrets
 from typing import Annotated, cast
 from uuid import UUID
 
-from fastapi import APIRouter, Depends, Query, Request, status
+from fastapi import APIRouter, Depends, HTTPException, Query, Request, status
 
 from app.api.schemas import (
     ApiErrorResponse,
@@ -15,6 +16,7 @@ from app.api.schemas import (
     ResearchRunResponse,
     SkippedSourcesResponse,
 )
+from app.core.settings import get_settings
 from app.models.health import HealthResponse
 from app.services.research_api import ResearchRunApplicationService
 
@@ -24,6 +26,26 @@ router = APIRouter(prefix="/api")
 def get_research_service(request: Request) -> ResearchRunApplicationService:
     """Resolve the application-scoped research service."""
     return cast(ResearchRunApplicationService, request.app.state.research_service)
+
+
+def require_write_access(request: Request) -> None:
+    """Require the configured bearer token for quota-consuming mutations."""
+    configured = get_settings().api_access_token
+    if configured is None:
+        return
+    authorization = request.headers.get("Authorization", "")
+    scheme, _, supplied = authorization.partition(" ")
+    expected = configured.get_secret_value()
+    if (
+        scheme.casefold() != "bearer"
+        or not supplied
+        or not secrets.compare_digest(supplied, expected)
+    ):
+        raise HTTPException(
+            status_code=401,
+            detail="Valid API bearer authentication is required.",
+            headers={"WWW-Authenticate": "Bearer"},
+        )
 
 
 ResearchService = Annotated[
@@ -52,6 +74,7 @@ ERROR_RESPONSES = {
 async def create_research_run(
     payload: CreateResearchRunRequest,
     service: ResearchService,
+    _: Annotated[None, Depends(require_write_access)],
 ) -> ResearchRunResponse:
     """Start a run asynchronously and return its pollable identifier."""
     return await service.submit(payload)
@@ -83,7 +106,7 @@ async def get_research_results(
     offset: PageOffset = 0,
     limit: PageLimit = 25,
 ) -> ResearchResultsResponse:
-    """Return paginated final or partial independently verified records."""
+    """Return paginated final or partial site-verified records."""
     return service.get_results(run_id, offset=offset, limit=limit)
 
 
@@ -120,6 +143,7 @@ async def get_skipped_sources(
 async def export_google_sheets(
     run_id: UUID,
     service: ResearchService,
+    _: Annotated[None, Depends(require_write_access)],
     payload: GoogleSheetsExportRequest | None = None,
 ) -> GoogleSheetsExportResponse:
     """Export a terminal run using the configured Google Sheets exporter."""

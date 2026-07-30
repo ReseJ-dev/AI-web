@@ -1,6 +1,7 @@
 """Combined domain, robots, and advisory terms compliance preflight."""
 
 from dataclasses import dataclass
+from urllib.parse import urlsplit, urlunsplit
 
 import httpx
 
@@ -10,6 +11,11 @@ from app.models import (
     PreflightDecision,
     RobotsPolicyRecord,
     TermsPolicyResult,
+)
+from app.services.outbound_safety import (
+    UnsafeOutboundUrlError,
+    ensure_public_http_url,
+    validate_public_http_url,
 )
 from app.services.robots_policy import RobotsPolicyService
 from app.services.source_policy import (
@@ -22,6 +28,7 @@ from app.services.terms_policy import TermsPolicyScanner
 _LEGAL_DISCLAIMER = (
     "Terms scanning is a compliance risk signal only and is not legal advice."
 )
+_MAX_PREFLIGHT_BYTES = 1_000_000
 
 
 @dataclass(frozen=True, slots=True)
@@ -84,6 +91,9 @@ class CompliancePreflightService:
         )
         self._owns_robots_policy = robots_policy is None
         self._terms_scanner = terms_scanner or TermsPolicyScanner()
+        self._approved_targets: set[str] = set()
+        self._approved_origins: set[str] = set()
+        self._prefetched_html: dict[str, str] = {}
 
     async def check(self, target_url: str) -> CompliancePreflightResult:
         """Return a combined decision without bypassing earlier policy blocks."""
@@ -113,6 +123,21 @@ class CompliancePreflightService:
                 reason=(
                     "Preflight stopped before fetching content because "
                     f"{target_robots.reason}"
+                ),
+            )
+
+        origin = self._origin(target_url)
+        if target_url in self._approved_targets or origin in self._approved_origins:
+            return self._result(
+                target_url=target_url,
+                domain_result=domain_result,
+                decision=PreflightDecision.APPROVED,
+                robots_checks=robots_checks,
+                terms_results=[],
+                reason=(
+                    "Domain and target-path robots policies permit access; the "
+                    "origin terms preflight was already approved. "
+                    f"{_LEGAL_DISCLAIMER}"
                 ),
             )
 
@@ -202,7 +227,7 @@ class CompliancePreflightService:
             terms_reason = "No public terms-policy link was identified."
         else:
             terms_reason = "No automated-access restriction signal was identified."
-        return self._result(
+        result = self._result(
             target_url=target_url,
             domain_result=domain_result,
             decision=PreflightDecision.APPROVED,
@@ -213,11 +238,29 @@ class CompliancePreflightService:
                 f"{terms_reason} {_LEGAL_DISCLAIMER}"
             ),
         )
+        self._approved_targets.add(target_url)
+        self._approved_origins.add(origin)
+        self._prefetched_html[target_url] = target_page.html
+        return result
+
+    def take_prefetched_content(self, target_url: str) -> str | None:
+        """Transfer one approved transient homepage body to the crawler."""
+        return self._prefetched_html.pop(target_url, None)
 
     async def _fetch_html(self, url: str) -> _HtmlFetchResult:
         """Fetch one content page after its robots decision is approved."""
         try:
-            response = await self._client.get(
+            validate_public_http_url(url)
+            if self._owns_client:
+                await ensure_public_http_url(url)
+        except UnsafeOutboundUrlError:
+            return _HtmlFetchResult(
+                html=None,
+                reason="The compliance page did not pass outbound network safety.",
+            )
+        try:
+            async with self._client.stream(
+                "GET",
                 url,
                 headers={
                     "Accept": "text/html,application/xhtml+xml",
@@ -225,33 +268,50 @@ class CompliancePreflightService:
                 },
                 timeout=self._timeout_seconds,
                 follow_redirects=False,
-            )
+            ) as response:
+                if not 200 <= response.status_code < 300:
+                    return _HtmlFetchResult(
+                        html=None,
+                        reason=(
+                            "The compliance page returned ambiguous HTTP "
+                            f"{response.status_code}."
+                        ),
+                    )
+                content_type = response.headers.get("Content-Type", "").lower()
+                if content_type and not (
+                    content_type.startswith("text/html")
+                    or content_type.startswith("application/xhtml+xml")
+                ):
+                    return _HtmlFetchResult(
+                        html=None,
+                        reason=(
+                            "The compliance page did not return an HTML content type."
+                        ),
+                    )
+                content = bytearray()
+                async for chunk in response.aiter_bytes():
+                    if len(content) + len(chunk) > _MAX_PREFLIGHT_BYTES:
+                        return _HtmlFetchResult(
+                            html=None,
+                            reason="The compliance page exceeded the 1 MB limit.",
+                        )
+                    content.extend(chunk)
         except httpx.TransportError:
             return _HtmlFetchResult(
                 html=None,
                 reason="The compliance page could not be fetched.",
             )
 
-        if not 200 <= response.status_code < 300:
-            return _HtmlFetchResult(
-                html=None,
-                reason=(
-                    "The compliance page returned ambiguous HTTP "
-                    f"{response.status_code}."
-                ),
-            )
-        content_type = response.headers.get("Content-Type", "").lower()
-        if content_type and not (
-            content_type.startswith("text/html")
-            or content_type.startswith("application/xhtml+xml")
-        ):
-            return _HtmlFetchResult(
-                html=None,
-                reason=("The compliance page did not return an HTML content type."),
-            )
         return _HtmlFetchResult(
-            html=response.text,
+            html=bytes(content).decode("utf-8", errors="replace"),
             reason="The compliance page was fetched.",
+        )
+
+    @staticmethod
+    def _origin(url: str) -> str:
+        parsed = urlsplit(url)
+        return urlunsplit(
+            (parsed.scheme.casefold(), parsed.netloc.casefold(), "", "", "")
         )
 
     @staticmethod

@@ -11,11 +11,15 @@ from app.api.schemas import (
     ResearchRunResponse,
     SkippedSourcesResponse,
 )
-from app.core.settings import get_settings
+from app.core.settings import get_ui_settings
 from app.models import RequestedField, ResearchRunStatus
 from app.ui.api_client import DashboardApiError, ResearchApiClient
 from app.ui.presentation import (
+    DEFAULT_COUNTRY_HINT,
     DEFAULT_FIELDS,
+    DEFAULT_LANGUAGE_HINT,
+    DEFAULT_RESULT_COUNT,
+    DEFAULT_TOPIC,
     FIELD_OPTIONS,
     country_code_from_hint,
     filter_results,
@@ -32,9 +36,9 @@ TERMINAL_STATUSES = {
 
 
 @st.cache_resource
-def _api_client(base_url: str) -> ResearchApiClient:
+def _api_client(base_url: str, access_token: str | None) -> ResearchApiClient:
     """Reuse pooled API connections across Streamlit reruns."""
-    return ResearchApiClient(base_url)
+    return ResearchApiClient(base_url, access_token=access_token)
 
 
 def _initialize_state() -> None:
@@ -148,7 +152,7 @@ def _render_status(run: ResearchRunResponse) -> None:
     if run.status is ResearchRunStatus.FAILED:
         st.error(
             run.error_message
-            or "The run stopped early. Any independently verified partial "
+            or "The run stopped early. Any site-verified partial "
             "results remain available below."
         )
 
@@ -164,7 +168,7 @@ def _render_results(
             "the configured verification and compliance workflow."
         )
     if not results.items:
-        st.info("No independently verified results are available yet.")
+        st.info("No site-verified results are available yet.")
         return
 
     minimum_score = st.slider(
@@ -289,8 +293,13 @@ def main() -> None:
         layout="wide",
     )
     _initialize_state()
-    settings = get_settings()
-    client = _api_client(settings.ui_api_base_url)
+    settings = get_ui_settings()
+    access_token = (
+        settings.api_access_token.get_secret_value()
+        if settings.api_access_token is not None
+        else None
+    )
+    client = _api_client(settings.api_base_url, access_token)
 
     st.title("AI Web Research & Data Extraction Agent")
     st.markdown(
@@ -306,24 +315,24 @@ def main() -> None:
     with st.form("research_request"):
         topic = st.text_input(
             "Research topic",
-            value="Shopify agencies in the Netherlands",
+            value=DEFAULT_TOPIC,
         )
         form_columns = st.columns(3)
         result_count = form_columns[0].number_input(
             "Required number of results",
             min_value=1,
             max_value=100,
-            value=30,
+            value=DEFAULT_RESULT_COUNT,
             step=1,
         )
         country_hint = form_columns[1].text_input(
             "Country hint",
-            value="Netherlands",
+            value=DEFAULT_COUNTRY_HINT,
             help="Use a country name or two-letter country code.",
         )
         language_hint = form_columns[2].text_input(
             "Language hint",
-            value="en",
+            value=DEFAULT_LANGUAGE_HINT,
             help="Two- or three-letter language code, such as en or nl.",
         )
         selected_fields = st.multiselect(
@@ -332,20 +341,14 @@ def main() -> None:
             default=DEFAULT_FIELDS,
             key="requested_fields",
         )
-        strict_compliance = st.checkbox(
-            "Strict compliance mode",
-            value=True,
-            help=(
-                "This portfolio demo starts research only in strict mode; "
-                "blocked and ambiguous sources are skipped."
-            ),
+        st.caption(
+            "Strict compliance mode is enforced by the API server; blocked and "
+            "ambiguous sources are skipped."
         )
-        if not strict_compliance:
-            st.warning("Strict compliance mode is required for this portfolio demo.")
         start = st.form_submit_button(
             "Start Research",
             type="primary",
-            disabled=not strict_compliance or not selected_fields,
+            disabled=not selected_fields,
             use_container_width=True,
         )
 

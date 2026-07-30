@@ -133,7 +133,7 @@ class ResearchRunResponse(ApiModel):
 
 
 class ResearchResultItem(ApiModel):
-    """One independently verified company safe for API delivery."""
+    """One site-verified, evidence-bearing company safe for API delivery."""
 
     id: UUID
     company_name: str
