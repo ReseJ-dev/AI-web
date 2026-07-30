@@ -1,0 +1,65 @@
+demo_data: true
+demo_notice: >-
+  SYNTHETIC PORTFOLIO DEMO DATA ONLY. Company names, websites, evidence, scores,
+  and skipped sources are fictional and must not be treated as research output.
+scenario_id: shopify-agencies-netherlands
+
+research_request:
+  topic: Shopify agencies in the Netherlands
+  required_result_count: 30
+  required_fields:
+    - Company name
+    - Website
+    - Country
+    - Services
+    - Contact page
+    - Short summary
+    - Relevance score
+
+example_search_queries:
+  - Shopify agency Netherlands
+  - Shopify Plus agency Netherlands
+  - Shopify development company Netherlands
+  - Shopify ecommerce agency Amsterdam
+  - Shopify ecommerce agency Rotterdam
+  - Shopify ecommerce agency Utrecht
+  - Shopify migration agency Netherlands
+  - Dutch Shopify development agency
+  - site:.nl Shopify agency
+  - site:.nl Shopify Plus partner
+
+google_sheets_output:
+  - name: Research Results
+    columns:
+      - Company name
+      - Website
+      - Country
+      - Services
+      - Contact page
+      - Short summary
+      - Relevance score
+      - Relevance explanation
+      - Evidence URLs
+      - Compliance status
+      - Validation warnings
+      - Retrieved at
+  - name: Skipped Sources
+    columns:
+      - Domain
+      - URL
+      - Decision
+      - Reason
+      - Robots status
+      - Terms status
+      - Checked at
+  - name: Run Metadata
+    columns:
+      - Field
+      - Value
+
+offline_files:
+  fake_results: demo/shopify_agencies_fake_results.json
+  google_sheets_previews:
+    - demo/google_sheets/Research Results.csv
+    - demo/google_sheets/Skipped Sources.csv
+    - demo/google_sheets/Run Metadata.csv

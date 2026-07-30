@@ -1,0 +1,11 @@
+Field,Value
+demo data,TRUE — synthetic portfolio output; no real companies were researched
+topic,Shopify agencies in the Netherlands
+requested result count,30
+completed result count,30
+generated queries,Shopify agency Netherlands | Shopify Plus agency Netherlands | Shopify development company Netherlands | Shopify ecommerce agency Amsterdam | Shopify ecommerce agency Rotterdam | Shopify ecommerce agency Utrecht | Shopify migration agency Netherlands | Dutch Shopify development agency | site:.nl Shopify agency | site:.nl Shopify Plus partner
+start time,2026-07-30T10:00:00Z
+completion time,2026-07-30T10:15:00Z
+providers,FakeSearchProvider | FakeLLMProvider
+strict compliance mode,TRUE
+warnings,DEMO DATA — all companies and sources are fictional

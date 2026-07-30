@@ -1,0 +1,3 @@
+Domain,URL,Decision,Reason,Robots status,Terms status,Checked at
+demo-review-01.example,https://demo-review-01.example/,manual_review_required,DEMO DATA: synthetic domain has no approval decision.,not requested,not requested,2026-07-30T10:10:00Z
+demo-blocked-01.example,https://demo-blocked-01.example/,rejected,DEMO DATA: synthetic domain represents a configured blocked-source decision.,not requested,not requested,2026-07-30T10:11:00Z

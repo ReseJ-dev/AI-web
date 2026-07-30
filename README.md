@@ -356,6 +356,28 @@ After a run reaches a terminal state,
 `POST /api/research-runs/{run_id}/export/google-sheets` exports its final or
 partial records using the configured Google Sheets service account.
 
+## Offline portfolio demo
+
+The committed
+[`config/demo_shopify_agencies.yaml`](config/demo_shopify_agencies.yaml)
+captures the 30-result Shopify agencies brief, all seven requested fields, the
+ten example search queries, and the ordered Google Sheets tab structures.
+
+For presentations without provider credentials or network access, the
+[`demo`](demo/README.md) directory includes 30 synthetic results and CSV
+previews of `Research Results`, `Skipped Sources`, and `Run Metadata`.
+
+> **DEMO DATA:** Every company name, domain, evidence URL, summary, decision,
+> and score in these fixtures is fictional. Reserved `.example` domains and
+> prominent per-record warnings prevent the dataset from being mistaken for
+> verified research. No unverified real company appears in the demo.
+
+The typed demo loader rejects non-`.example` sources, missing fictional-data
+warnings, mismatched result counts, duplicate fields or queries, and malformed
+sheet definitions. Tests keep the fixture aligned with the canonical request.
+Demo records are presentation assets and are never loaded into production
+repositories.
+
 ## Streamlit dashboard
 
 The Streamlit portfolio interface is an API client; it does not load or retain
