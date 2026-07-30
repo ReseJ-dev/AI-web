@@ -1,18 +1,140 @@
 # AI Web Research & Data Extraction Agent
 
-A portfolio project for a compliant web research and structured data extraction
-agent. It includes source policy and robots preflight, transient search,
-company-page selection, clean HTML extraction, and evidence-based structured
-company extraction, deduplication, scoring, and resilient research
-orchestration. Concrete crawler, enrichment, and exporter adapters are injected
-at deployment time, including an official Google Sheets API exporter.
+A portfolio project that turns a research brief into a ranked, auditable
+dataset of companies. It combines policy-aware source discovery, bounded
+website crawling, evidence-based extraction, enrichment, entity resolution,
+deterministic scoring, persistence, and export behind FastAPI and Streamlit.
+
+## Project overview
+
+The example brief—“Shopify agencies in the Netherlands”—looks simple, but a
+useful answer needs more than a list of links. Each company must be identified
+from its official website, checked against source and robots policies, supported
+with evidence, deduplicated, scored consistently, and accompanied by a report
+of sources that could not safely be used.
+
+This project models that complete workflow. Search results are discovery hints,
+not facts. Only independently validated company records reach the database or
+an export. Failures are isolated per domain, allowing a run to complete with
+partial results and explicit warnings.
+
+## Problem statement
+
+Manual company research is slow and difficult to reproduce. Naive automation
+can be faster, but commonly loses provenance, repeats the same company under
+different names, invents unsupported values, retains restricted search data, or
+fetches websites without checking their published controls.
+
+The agent is designed around three goals:
+
+1. Produce structured data whose fields can be traced to evidence URLs.
+2. Make source, compliance, merge, and relevance decisions explainable.
+3. Keep providers replaceable so API, model, enrichment, storage, and export
+   choices can change without rewriting the workflow.
+
+## Key features
+
+- Asynchronous, replaceable search-provider integration and deterministic query
+  planning.
+- Configurable approved, blocked, candidate-review, exact-domain, and subdomain
+  policies.
+- Robots and terms-risk preflight before bounded same-domain website crawling.
+- English and Dutch page discovery with clean, source-attributed content
+  extraction.
+- Deterministic extraction first, followed by optional strict-schema LLM
+  extraction that rejects unsupported fields.
+- Evidence-preserving OpenCorporates, Wikidata, and GeoNames enrichment.
+- Explainable entity resolution and deterministic relevance scoring from
+  0–100.
+- Partial-success orchestration with progress events and skipped-source audit
+  records.
+- UUID-based UTC persistence with SQLite locally, PostgreSQL compatibility, and
+  Alembic migrations.
+- FastAPI endpoints, a Streamlit dashboard, CSV download, and formatted Google
+  Sheets export.
+- Offline unit and integration tests, opt-in live smoke checks, Docker Compose,
+  and GitHub Actions quality checks.
+
+## Architecture
+
+```mermaid
+flowchart TB
+    User[User] --> Streamlit[Streamlit]
+    Streamlit --> FastAPI[FastAPI]
+    FastAPI --> Orchestrator[Research Orchestrator]
+    Orchestrator --> Search[Search Provider]
+    Search --> Preflight[Compliance Preflight]
+    Preflight --> Crawler[Website Crawler]
+    Crawler --> Content[Content Extractor]
+    Content --> Extraction[Structured AI Extractor]
+    Extraction --> Enrichment[Enrichment Providers]
+    Enrichment --> Deduplication[Deduplication]
+    Deduplication --> Scoring[Relevance Scoring]
+    Scoring --> Database[(Database)]
+    Database --> Sheets[Google Sheets]
+```
+
+The Streamlit client submits a validated brief to FastAPI and polls a background
+research run. `ResearchOrchestrator` plans queries, keeps discovered candidates
+transient, and advances each likely official website through policy, crawling,
+content, extraction, enrichment, resolution, and scoring stages. Repository
+interfaces persist only final verified records, run state, and skipped-source
+reports. Exporters transform that persisted result into delivery formats.
+
+Progress events expose `planning`, `searching`, `validating`,
+`checking_compliance`, `crawling`, `extracting`, `enriching`,
+`deduplicating`, `scoring`, `exporting`, and terminal states without coupling
+the UI to implementation details.
+
+### Provider-based design
+
+External capabilities sit behind typed interfaces:
+
+- `SearchProvider` discovers transient candidates; Brave and fake adapters are
+  included.
+- `LLMProvider` supplies strict structured responses without owning extraction
+  validation.
+- `StructuredDataExtractor` supports deterministic, LLM, and composite
+  strategies.
+- `CompanyEnrichmentProvider` supports official OpenCorporates, Wikidata, and
+  GeoNames endpoints.
+- Repository interfaces separate orchestration from SQLAlchemy persistence.
+- `ResultExporter` separates research from Google Sheets delivery.
+
+Fake providers and local HTML fixtures exercise the same orchestration contract
+without paid calls or live network access. A new vendor adapter can therefore
+be added at the boundary instead of being embedded in route handlers or domain
+services.
+
+### Compliance-first boundaries
+
+The project intentionally applies conservative operational boundaries:
+
+- Google and Bing result pages are not scraped. Discovery uses a configured
+  official search API.
+- The Shopify Partner Directory is not scraped.
+- LinkedIn, Clutch, and Crunchbase are blocked by default, alongside other
+  configured high-risk sources.
+- Search API responses and snippets are transient unless the operator has
+  configured appropriate retention rights and implemented an allowed storage
+  path.
+- In strict mode, company websites require explicit policy approval before
+  content access.
+- The application never bypasses authentication, CAPTCHA, `robots.txt`, rate
+  limits, or technical access restrictions.
+- Extracted data includes evidence URLs, and unsupported required fields reject
+  a record.
+- Source-policy, robots, and terms checks are engineering risk controls, not
+  legal advice.
 
 ## Requirements
 
-- Python 3.12
+- Python 3.12–3.14 (Python 3.12 is used in Docker and CI)
 - GNU Make (optional)
+- Docker with Docker Compose (optional)
+- PostgreSQL for the Docker stack; SQLite is the local default
 
-## Setup
+## Installation
 
 ```bash
 python3.12 -m venv .venv
@@ -27,7 +149,32 @@ Copy the environment template for local configuration:
 cp .env.example .env
 ```
 
-## Run the applications
+## Environment variables
+
+All settings are loaded from environment variables through Pydantic Settings.
+The committed [`.env.example`](.env.example) is the complete template; `.env`
+is ignored by Git and must contain only local values.
+
+| Area | Variables | Purpose |
+| --- | --- | --- |
+| Runtime | `APP_ENV`, `LOG_LEVEL`, `PROJECT_USER_AGENT` | Environment, structured-log level, and descriptive network identity |
+| Database | `DATABASE_URL` | SQLAlchemy SQLite or PostgreSQL connection URL |
+| Docker database | `POSTGRES_DB`, `POSTGRES_USER`, `POSTGRES_PASSWORD`, `COMPOSE_DATABASE_URL` | Runtime-only Compose database initialization and API connection |
+| Source policy | `SOURCE_POLICY_CONFIG_DIR`, `ROBOTS_STRICT_MODE`, `ROBOTS_CACHE_TTL_SECONDS`, `COMPLIANCE_HTTP_TIMEOUT_SECONDS`, `TERMS_MAX_DOCUMENTS` | Policy files and compliance behavior |
+| Search | `BRAVE_SEARCH_API_KEY`, `SEARCH_RESULT_RETENTION_ALLOWED`, `SEARCH_TIMEOUT_SECONDS`, `SEARCH_MAX_RETRIES`, `SEARCH_BACKOFF_SECONDS` | Official Brave API access and bounded retries |
+| Extraction | `HTML_CONTENT_MAX_CHARS`, `LLM_PROVIDER`, `LLM_MODEL`, `LLM_API_URL`, `LLM_API_KEY`, `LLM_MAX_INPUT_CHARS` | Clean-text limits and optional model provider |
+| Research and crawl | `RESEARCH_SEARCH_BUDGET`, `RESEARCH_SEARCH_PAGE_SIZE`, `RESEARCH_CRAWL_PAGE_LIMIT`, `CRAWLER_REQUEST_DELAY_SECONDS`, `CRAWLER_MAX_RESPONSE_BYTES`, `CRAWLER_TIMEOUT_SECONDS` | Work budgets and crawler limits |
+| Enrichment | `OPENCORPORATES_*`, `WIKIDATA_*`, `GEONAMES_*` | Optional official enrichment endpoints, licensing gates, retry, and cache settings |
+| Google Sheets | `GOOGLE_SERVICE_ACCOUNT_FILE`, `GOOGLE_SERVICE_ACCOUNT_JSON`, `GOOGLE_SHEETS_*` | Service-account credentials, target sheet, creation permission, and retries |
+| UI and live tests | `UI_API_BASE_URL`, `RUN_LIVE_WEBSITE_SMOKE_TESTS` | Dashboard API endpoint and explicit live-test opt-in |
+
+Blank optional credentials disable their providers. Keep secrets in `.env`, CI
+secrets, or a deployment secret manager; they are never required in an image
+or committed configuration.
+
+## Local development
+
+After installation and `make migrate`, start the applications in two terminals.
 
 Start the API:
 
@@ -35,21 +182,40 @@ Start the API:
 make run-api
 ```
 
-The health endpoint is available at `http://localhost:8000/health`.
-The versioned health endpoint is available at
-`http://localhost:8000/api/health`, and interactive OpenAPI documentation is
-available at `http://localhost:8000/docs`.
-
 Start the Streamlit UI in another terminal:
 
 ```bash
 make run-ui
 ```
 
-Apply database migrations:
+The health endpoint is available at `http://localhost:8000/health`.
+The versioned health endpoint is available at
+`http://localhost:8000/api/health`, interactive OpenAPI documentation is at
+`http://localhost:8000/docs`, and Streamlit is at
+`http://localhost:8501`.
+
+## Database migrations
+
+SQLite is suitable for local development. Configure `DATABASE_URL` with a
+`postgresql+psycopg://` URL for PostgreSQL. Apply the committed schema:
 
 ```bash
 make migrate
+```
+
+Useful Alembic commands:
+
+```bash
+alembic current
+alembic history
+alembic upgrade head
+alembic downgrade -1
+```
+
+Create a reviewed migration after changing persistence models:
+
+```bash
+make migration message="describe schema change"
 ```
 
 ## Docker development environment
@@ -103,7 +269,7 @@ make docker-down
 `docker compose down` preserves database data. To intentionally remove the
 local database volume, use `docker compose down --volumes`.
 
-## Research API
+## Example research request
 
 Research runs are asynchronous. `POST /api/research-runs` validates the topic,
 requested fields, result count, and locale, returns `202 Accepted`, and provides
@@ -132,6 +298,54 @@ curl -X POST http://localhost:8000/api/research-runs \
   }'
 ```
 
+Poll the returned run ID and then request
+`GET /api/research-runs/{run_id}/results`. An illustrative response is shown
+below; the `.example` company is fictional and is not an endorsement or a
+captured live result.
+
+```json
+{
+  "run_id": "6f9619ff-8b86-4d11-b42d-00cf4fc964ff",
+  "items": [
+    {
+      "id": "2f5ad4b6-8ac3-42c4-99e3-0f3d58cb48cc",
+      "company_name": "Example Commerce Studio",
+      "website": "https://commerce-studio.example/",
+      "country": "Netherlands",
+      "services": [
+        "Shopify development",
+        "Shopify Plus implementation"
+      ],
+      "contact_page": "https://commerce-studio.example/contact",
+      "short_summary": "A Netherlands-based studio providing evidence-backed Shopify development and Shopify Plus implementation services.",
+      "relevance_score": 91,
+      "relevance_explanation": [
+        "Shopify services are explicitly supported by official-site evidence.",
+        "The Netherlands location is explicitly supported by official-site evidence.",
+        "A public business contact page was verified."
+      ],
+      "evidence_urls": [
+        "https://commerce-studio.example/services/shopify",
+        "https://commerce-studio.example/about",
+        "https://commerce-studio.example/contact"
+      ],
+      "compliance_status": "approved",
+      "validation_warnings": [],
+      "retrieved_at": "2026-07-30T10:15:00Z"
+    }
+  ],
+  "total": 1,
+  "offset": 0,
+  "limit": 100,
+  "partial": true
+}
+```
+
+Each extracted value is admitted only when the extractor can associate it with
+allowed evidence. The compact API response returns the combined evidence URL
+set; internal extraction models retain field-level attribution, confidence,
+method, and compact evidence fragments.
+
 Every response includes `X-Request-ID`; a safe caller-provided value is
 preserved. Validation, missing-run, lifecycle-conflict, provider, and internal
 failures use a consistent `error` envelope. Error responses and
@@ -158,6 +372,18 @@ audit details, and validation warnings.
 The demo requires strict compliance mode. Blocked or ambiguous websites are
 skipped; these automated controls are operational risk signals and do not
 provide legal advice.
+
+## Screenshots
+
+### Streamlit research setup
+
+![Streamlit research dashboard prepopulated with the Shopify agencies example](docs/screenshots/streamlit-dashboard.png)
+
+The real application screenshot shows the prepopulated portfolio brief,
+requested output fields, strict-compliance control, and optional Google Sheet
+target. During an active run, the same dashboard adds progress counters,
+results and skipped-source tables, relevance filtering, warnings, CSV download,
+and Google Sheets export controls.
 
 ## Domain review CLI
 
@@ -379,6 +605,24 @@ Spreadsheet creation is disabled by default; omit the ID and set
 `GOOGLE_SHEETS_CREATE_ALLOWED=true` only when the service account is permitted
 to create a new spreadsheet.
 
+### Google Sheets setup
+
+1. Create or select a Google Cloud project and enable the Google Sheets API.
+2. Create a least-privilege service account for this application.
+3. Store its JSON credential outside the repository. Point
+   `GOOGLE_SERVICE_ACCOUNT_FILE` to the mounted file, or inject the complete
+   JSON through the secret `GOOGLE_SERVICE_ACCOUNT_JSON` variable.
+4. For an existing spreadsheet, share it with the service-account email and set
+   `GOOGLE_SHEETS_SPREADSHEET_ID`.
+5. Keep `GOOGLE_SHEETS_CREATE_ALLOWED=false` unless spreadsheet creation is an
+   intentional permission granted to that account.
+6. Start a completed or partially completed run, then use the dashboard button
+   or `POST /api/research-runs/{run_id}/export/google-sheets`.
+
+Credentials are read only by the API/exporter process. They are not sent to
+Streamlit, returned by provider-status endpoints, or written to exported run
+metadata.
+
 The exporter creates or reuses `Research Results`, `Skipped Sources`, and `Run
 Metadata` tabs. Values and formatting are sent with batch API calls, and quota
 or service failures use bounded exponential backoff. Headers are formatted,
@@ -440,14 +684,87 @@ checks are operational risk signals, not legal advice.
 
 ## Quality checks
 
+Run the complete offline suite:
+
 ```bash
 make check
 ```
 
-Or run each check independently:
+Or run checks independently:
 
 ```bash
 make lint
 make typecheck
 make test
 ```
+
+Generate the same terminal and XML coverage report used in CI:
+
+```bash
+pytest -m "not live" \
+  --cov=app \
+  --cov-report=term-missing \
+  --cov-report=xml:coverage.xml
+```
+
+Validate that migrations upgrade cleanly, match SQLAlchemy metadata, downgrade,
+and upgrade again:
+
+```bash
+DATABASE_URL=sqlite:///./data/migration-check.db alembic upgrade head
+DATABASE_URL=sqlite:///./data/migration-check.db alembic check
+DATABASE_URL=sqlite:///./data/migration-check.db alembic downgrade base
+DATABASE_URL=sqlite:///./data/migration-check.db alembic upgrade head
+```
+
+GitHub Actions installs dependencies with a pip cache and fails on Ruff lint,
+Ruff formatting, mypy, pytest, or migration errors. CI explicitly excludes the
+`live` marker and supplies no paid-provider credentials, so it never depends on
+paid APIs or public websites.
+
+## Limitations
+
+- A configured Brave Search API key and the corresponding usage rights are
+  required for real candidate discovery; offline mode uses fake providers.
+- Candidate coverage is bounded by the configured query and crawl budgets, so a
+  requested count is not guaranteed. Partial results and skipped sources are
+  expected outcomes.
+- Strict mode intentionally trades recall for safety: unknown, ambiguous,
+  blocked, robots-disallowed, challenged, or rate-limited sites are skipped.
+- The crawler does not execute JavaScript. Sites whose meaningful public
+  content exists only after client-side rendering may yield incomplete
+  extraction.
+- Terms scanning identifies risk phrases but cannot interpret contracts or
+  determine whether an activity is legally permitted. It is not legal advice.
+- LLM extraction quality depends on the configured provider and cleaned source
+  material. Schema and evidence validation reduce hallucination risk but cannot
+  establish that a website's own claims are true.
+- Evidence reflects publicly available pages at retrieval time. Websites,
+  company status, and provider datasets can later change.
+- API background work is process-local rather than managed by a durable
+  distributed task queue, which limits horizontal scaling and restart recovery.
+- The included migration workflow validates SQLite in CI. PostgreSQL is
+  supported by the models and Docker environment but should also be exercised
+  in deployment-specific integration tests.
+- Google Sheets export depends on account permissions, API availability, quota,
+  and the operator's handling of service-account credentials.
+
+## Future improvements
+
+- Move research jobs to a durable queue with separate workers, cancellation,
+  leases, and restart-safe progress.
+- Add more official search and LLM adapters while preserving the same transient
+  result and evidence contracts.
+- Run migration and repository integration tests against ephemeral PostgreSQL
+  in CI.
+- Add authenticated multi-user workspaces, role-based domain review, and
+  per-project source policies.
+- Add OpenTelemetry traces, metrics, structured audit dashboards, and provider
+  cost/budget telemetry without logging source content or secrets.
+- Add scheduled revalidation for stale evidence, robots decisions, enrichment
+  conflicts, and company status.
+- Add more export targets such as JSON Lines and object storage with explicit
+  retention policies.
+- Expand multilingual page selection and deterministic extraction fixtures.
+- Add an optional policy-approved rendering adapter for public JavaScript sites
+  without weakening authentication, robots, CAPTCHA, or rate-limit controls.
