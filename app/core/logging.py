@@ -15,6 +15,7 @@ _SECRET_FIELDS = frozenset(
         "apikey",
         "authorization",
         "brave_search_api_key",
+        "tavily_api_key",
         "token",
         "x_subscription_token",
     }

@@ -499,19 +499,19 @@ def test_provider_config_health_and_openapi_never_expose_keys(
     monkeypatch: Any,
 ) -> None:
     """Configuration is boolean-only and OpenAPI documents all required routes."""
-    monkeypatch.setenv("BRAVE_SEARCH_API_KEY", "brave-private")
+    monkeypatch.setenv("TAVILY_API_KEY", "tavily-private")
     monkeypatch.setenv("API_ACCESS_TOKEN", "portfolio-api-secret")
     monkeypatch.setenv("LLM_PROVIDER", "http")
     monkeypatch.setenv("LLM_API_URL", "https://llm.example/v1")
     monkeypatch.setenv("LLM_API_KEY", "llm-private")
     settings = Settings(_env_file=None)
     with _client(
-        _FakeWorkflow(warning="Provider brave-private returned a warning."),
+        _FakeWorkflow(warning="Provider tavily-private returned a warning."),
         settings=settings,
     ) as client:
         providers = client.get("/api/config/providers")
         assert providers.status_code == 200
-        assert "brave-private" not in providers.text
+        assert "tavily-private" not in providers.text
         assert "llm-private" not in providers.text
         assert all("api_key" not in item for item in providers.json()["providers"])
 
@@ -521,7 +521,7 @@ def test_provider_config_health_and_openapi_never_expose_keys(
             headers={"Authorization": "Bearer portfolio-api-secret"},
         ).json()["id"]
         terminal = _wait_for_terminal(client, run_id)
-        assert "brave-private" not in str(terminal)
+        assert "tavily-private" not in str(terminal)
         assert "[REDACTED]" in str(terminal)
 
         assert client.get("/api/health").json() == {"status": "ok"}

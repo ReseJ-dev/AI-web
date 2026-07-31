@@ -6,12 +6,12 @@ from app.core.settings import Settings, get_settings
 from app.exporters import GoogleSheetsExporter, ResultExporter
 from app.providers import (
     AsyncWebsiteCrawler,
-    BraveSearchProvider,
     CompanyEnrichmentProvider,
     GeoNamesProvider,
     OpenCorporatesProvider,
     WikidataProvider,
     resolve_llm_provider,
+    resolve_search_provider,
 )
 from app.repositories import (
     SqlAlchemyCompanyRecordRepository,
@@ -85,11 +85,18 @@ def build_research_service() -> ResearchRunApplicationService:
     company_repository = SqlAlchemyCompanyRecordRepository()
     skipped_repository = SqlAlchemySkippedSourceRepository()
     workflow: ResearchOrchestrator | None = None
-    if _secret_present(settings.brave_search_api_key):
+    search_credentials = {
+        "brave": settings.brave_search_api_key,
+        "tavily": settings.tavily_api_key,
+    }
+    selected_search_key = search_credentials.get(
+        settings.search_provider.casefold().strip()
+    )
+    if _secret_present(selected_search_key):
         source_policy = SourcePolicyService()
         compliance = CompliancePreflightService(domain_policy=source_policy)
         workflow = ResearchOrchestrator(
-            search_provider=BraveSearchProvider(),
+            search_provider=resolve_search_provider(),
             source_policy=source_policy,
             compliance_preflight=compliance,
             crawler=AsyncWebsiteCrawler(compliance_preflight=compliance),

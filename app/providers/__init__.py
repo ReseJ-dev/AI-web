@@ -52,7 +52,8 @@ from app.providers.opencorporates import (
     OpenCorporatesResponseError,
     OpenCorporatesUnavailableError,
 )
-from app.providers.search import SearchProvider
+from app.providers.search import SearchProvider, resolve_search_provider
+from app.providers.tavily_search import TavilySearchProvider
 from app.providers.wikidata import (
     WikidataConfigurationError,
     WikidataProvider,
@@ -105,6 +106,7 @@ __all__ = [
     "SearchRateLimitError",
     "SearchResponseError",
     "SearchTimeoutError",
+    "TavilySearchProvider",
     "WebsiteCrawler",
     "WikidataConfigurationError",
     "WikidataProvider",
@@ -113,4 +115,5 @@ __all__ = [
     "WikidataResponseError",
     "WikidataUnavailableError",
     "resolve_llm_provider",
+    "resolve_search_provider",
 ]

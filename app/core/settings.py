@@ -45,6 +45,16 @@ class Settings(BaseSettings):
         default=None,
         validation_alias="BRAVE_SEARCH_API_KEY",
     )
+    search_provider: str = Field(
+        default="tavily",
+        min_length=1,
+        max_length=50,
+        validation_alias="SEARCH_PROVIDER",
+    )
+    tavily_api_key: SecretStr | None = Field(
+        default=None,
+        validation_alias="TAVILY_API_KEY",
+    )
     search_result_retention_allowed: bool = Field(
         default=False,
         validation_alias="SEARCH_RESULT_RETENTION_ALLOWED",
@@ -339,7 +349,13 @@ class Settings(BaseSettings):
             return None
         return value
 
-    @field_validator("api_access_token", "llm_api_key", mode="before")
+    @field_validator(
+        "api_access_token",
+        "brave_search_api_key",
+        "tavily_api_key",
+        "llm_api_key",
+        mode="before",
+    )
     @classmethod
     def blank_api_secrets_are_unset(cls, value: object) -> object:
         """Treat blank API credential variables as unconfigured."""
@@ -358,6 +374,7 @@ class Settings(BaseSettings):
             raise ValueError("LLM_API_URL must use HTTPS when LLM_API_KEY is set")
         paid_or_mutating_credentials = (
             self.brave_search_api_key is not None
+            or self.tavily_api_key is not None
             or self.google_service_account_file is not None
             or self.google_service_account_json is not None
         )

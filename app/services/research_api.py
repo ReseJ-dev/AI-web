@@ -123,6 +123,7 @@ class ResearchRunApplicationService:
             secret
             for secret in (
                 self._secret_value(self._settings.brave_search_api_key),
+                self._secret_value(self._settings.tavily_api_key),
                 self._secret_value(self._settings.llm_api_key),
                 self._secret_value(self._settings.opencorporates_api_key),
                 self._secret_value(self._settings.geonames_username),
@@ -288,7 +289,12 @@ class ResearchRunApplicationService:
     def provider_config(self) -> ProvidersResponse:
         """Return only non-secret provider state."""
         settings = self._settings
-        brave_configured = self._secret_present(settings.brave_search_api_key)
+        search_provider = settings.search_provider.casefold().strip()
+        search_key = {
+            "brave": settings.brave_search_api_key,
+            "tavily": settings.tavily_api_key,
+        }.get(search_provider)
+        search_configured = self._secret_present(search_key)
         llm_selected = settings.llm_provider.casefold() != "disabled"
         llm_configured = (
             llm_selected
@@ -300,10 +306,10 @@ class ResearchRunApplicationService:
         )
         providers = [
             ProviderStatus(
-                name="brave_search",
+                name=f"{search_provider}_search",
                 category="search",
-                enabled=self._workflow is not None and brave_configured,
-                configured=brave_configured,
+                enabled=self._workflow is not None and search_configured,
+                configured=search_configured,
             ),
             ProviderStatus(
                 name="deterministic",

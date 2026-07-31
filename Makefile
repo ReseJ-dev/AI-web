@@ -4,7 +4,7 @@ install:
 	python -m pip install -e ".[dev]"
 
 run-api:
-	uvicorn app.api.main:app --reload
+	uvicorn app.api.main:app --reload --env-file .env
 
 run-ui:
 	streamlit run app/ui/main.py

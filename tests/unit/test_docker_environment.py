@@ -52,6 +52,7 @@ def test_compose_requires_runtime_database_credentials() -> None:
     assert (
         not {
             "BRAVE_SEARCH_API_KEY",
+            "TAVILY_API_KEY",
             "LLM_API_KEY",
             "GOOGLE_SERVICE_ACCOUNT_JSON",
         }
@@ -64,7 +65,10 @@ def test_compose_requires_runtime_database_credentials() -> None:
     }
     assert backend_variables <= api_environment.keys()
     assert "./.secrets:/run/secrets:ro" in _mapping(services["api"])["volumes"]
-    assert ui_environment["UI_API_ACCESS_TOKEN"] == "${API_ACCESS_TOKEN:-}"
+    assert (
+        ui_environment["UI_API_ACCESS_TOKEN"]
+        == "${UI_API_ACCESS_TOKEN:-${API_ACCESS_TOKEN:-}}"
+    )
 
 
 def test_images_use_python_312_non_root_users_and_health_checks() -> None:
@@ -78,3 +82,4 @@ def test_images_use_python_312_non_root_users_and_health_checks() -> None:
     dockerignore = (PROJECT_ROOT / ".dockerignore").read_text().splitlines()
     assert ".env" in dockerignore
     assert ".env.*" in dockerignore
+    assert ".secrets/" in dockerignore

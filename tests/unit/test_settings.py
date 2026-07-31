@@ -15,7 +15,8 @@ def test_settings_load_from_environment(monkeypatch: pytest.MonkeyPatch) -> None
     monkeypatch.setenv("DATABASE_URL", "sqlite:///:memory:")
     monkeypatch.setenv("SOURCE_POLICY_CONFIG_DIR", "/tmp/policy-config")
     monkeypatch.setenv("API_ACCESS_TOKEN", "api-secret")
-    monkeypatch.setenv("BRAVE_SEARCH_API_KEY", "test-secret")
+    monkeypatch.setenv("SEARCH_PROVIDER", "tavily")
+    monkeypatch.setenv("TAVILY_API_KEY", "test-secret")
     monkeypatch.setenv("SEARCH_RESULT_RETENTION_ALLOWED", "true")
     monkeypatch.setenv("LLM_PROVIDER", "fake")
     monkeypatch.setenv("LLM_MODEL", "test-company-model")
@@ -47,8 +48,9 @@ def test_settings_load_from_environment(monkeypatch: pytest.MonkeyPatch) -> None
     assert settings.database_url == "sqlite:///:memory:"
     assert settings.source_policy_config_dir == Path("/tmp/policy-config")
     assert settings.api_access_token is not None
-    assert settings.brave_search_api_key is not None
-    assert settings.brave_search_api_key.get_secret_value() == "test-secret"
+    assert settings.search_provider == "tavily"
+    assert settings.tavily_api_key is not None
+    assert settings.tavily_api_key.get_secret_value() == "test-secret"
     assert settings.search_result_retention_allowed is True
     assert settings.llm_provider == "fake"
     assert settings.llm_model == "test-company-model"
@@ -92,6 +94,19 @@ def test_blank_optional_google_settings_are_unset(
     assert settings.google_sheets_spreadsheet_id is None
 
 
+def test_blank_search_credentials_are_unset(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Copied environment templates do not enable search credentials."""
+    monkeypatch.setenv("BRAVE_SEARCH_API_KEY", "")
+    monkeypatch.setenv("TAVILY_API_KEY", "")
+
+    settings = Settings(_env_file=None)
+
+    assert settings.brave_search_api_key is None
+    assert settings.tavily_api_key is None
+
+
 def test_llm_bearer_key_requires_https() -> None:
     """Bearer credentials are never accepted for a plaintext model endpoint."""
     with pytest.raises(ValidationError, match="must use HTTPS"):
@@ -105,7 +120,7 @@ def test_llm_bearer_key_requires_https() -> None:
 def test_paid_or_mutating_credentials_require_api_access_token() -> None:
     """Search and Sheets credentials cannot expose unauthenticated mutations."""
     with pytest.raises(ValidationError, match="API_ACCESS_TOKEN"):
-        Settings(_env_file=None, brave_search_api_key="paid-secret")
+        Settings(_env_file=None, tavily_api_key="paid-secret")
 
 
 def test_ui_settings_do_not_define_backend_provider_secrets() -> None:

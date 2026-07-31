@@ -163,7 +163,7 @@ is ignored by Git and must contain only local values.
 | Database | `DATABASE_URL` | SQLAlchemy SQLite or PostgreSQL connection URL |
 | Docker database | `POSTGRES_DB`, `POSTGRES_USER`, `POSTGRES_PASSWORD`, `COMPOSE_DATABASE_URL` | Runtime-only Compose database initialization and API connection |
 | Source policy | `SOURCE_POLICY_CONFIG_DIR`, `ROBOTS_STRICT_MODE`, `ROBOTS_CACHE_TTL_SECONDS`, `COMPLIANCE_HTTP_TIMEOUT_SECONDS`, `TERMS_MAX_DOCUMENTS` | Policy files and compliance behavior |
-| Search | `BRAVE_SEARCH_API_KEY`, `SEARCH_RESULT_RETENTION_ALLOWED`, `SEARCH_TIMEOUT_SECONDS`, `SEARCH_MAX_RETRIES`, `SEARCH_BACKOFF_SECONDS` | Official Brave API access and bounded retries |
+| Search | `SEARCH_PROVIDER`, `TAVILY_API_KEY`, `SEARCH_RESULT_RETENTION_ALLOWED`, `SEARCH_TIMEOUT_SECONDS`, `SEARCH_MAX_RETRIES`, `SEARCH_BACKOFF_SECONDS` | Tavily API access and bounded retries |
 | Extraction | `HTML_CONTENT_MAX_CHARS`, `LLM_PROVIDER`, `LLM_MODEL`, `LLM_API_URL`, `LLM_API_KEY`, `LLM_MAX_INPUT_CHARS` | Clean-text limits and optional model provider |
 | Research and crawl | `RESEARCH_SEARCH_BUDGET`, `RESEARCH_SEARCH_PAGE_SIZE`, `RESEARCH_CRAWL_PAGE_LIMIT`, `CRAWLER_REQUEST_DELAY_SECONDS`, `CRAWLER_MAX_RESPONSE_BYTES`, `CRAWLER_TIMEOUT_SECONDS` | Work budgets and crawler limits |
 | Enrichment | `OPENCORPORATES_*`, `WIKIDATA_*`, `GEONAMES_*` | Optional official enrichment endpoints, licensing gates, retry, and cache settings |
@@ -172,7 +172,7 @@ is ignored by Git and must contain only local values.
 
 Blank optional credentials disable their providers. Keep secrets in `.env`, CI
 secrets, or a deployment secret manager; they are never required in an image
-or committed configuration. `API_ACCESS_TOKEN` is mandatory when Brave Search
+or committed configuration. `API_ACCESS_TOKEN` is mandatory when Tavily Search
 or Google service-account credentials are configured.
 
 ## Local development
@@ -460,21 +460,21 @@ Configuration changes can be applied at runtime with
 ## Search provider and result retention
 
 Candidate discovery uses the replaceable asynchronous `SearchProvider`
-contract. Set `BRAVE_SEARCH_API_KEY` to use `BraveSearchProvider`; tests and
-offline development can use `FakeSearchProvider`.
+contract. Set `SEARCH_PROVIDER=tavily` and `TAVILY_API_KEY` to use
+`TavilySearchProvider`; tests and offline development can use
+`FakeSearchProvider`.
 
-Brave search candidates are transient process-memory objects. Raw API responses
+Tavily search candidates are transient process-memory objects. Raw API responses
 and search snippets are never persisted, and the candidate model intentionally
 has no snippet field. Candidate-derived skipped URLs also remain in memory
 while `SEARCH_RESULT_RETENTION_ALLOWED=false`, which is the default.
 
-Persistent retention of Brave Search results requires a subscription or
+Persistent retention of Tavily Search results requires a subscription or
 agreement that explicitly grants storage rights. Setting
 `SEARCH_RESULT_RETENTION_ALLOWED=true` permits persistence of candidate-derived
 skipped-source URLs; it never persists raw responses or snippets and does not
 itself grant storage rights. Confirm applicable rights under
-the [Brave Search API terms](https://api-dashboard.search.brave.com/documentation/resources/terms-of-service)
-and your plan before adding any storage path.
+the Tavily terms and your plan before adding any storage path.
 
 ## Compliance preflight
 
@@ -763,7 +763,7 @@ paid APIs or public websites.
 
 ## Limitations
 
-- A configured Brave Search API key and the corresponding usage rights are
+- A configured Tavily Search API key and the corresponding usage rights are
   required for real candidate discovery; offline mode uses fake providers.
 - Candidate coverage is bounded by the configured query and crawl budgets, so a
   requested count is not guaranteed. Partial results and skipped sources are

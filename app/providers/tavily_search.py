@@ -1,8 +1,6 @@
-"""Asynchronous Brave Web Search provider."""
+"""Asynchronous Tavily Search provider."""
 
 import asyncio
-import html
-import re
 from collections.abc import Awaitable, Callable
 
 import httpx
@@ -22,26 +20,12 @@ from app.providers.search import (
 )
 from app.services.domain_normalization import InvalidDomainError, normalize_domain
 
-__all__ = [
-    "BRAVE_WEB_SEARCH_URL",
-    "BraveSearchProvider",
-    "SearchAuthenticationError",
-    "SearchAuthorizationError",
-    "SearchConfigurationError",
-    "SearchProviderError",
-    "SearchProviderUnavailableError",
-    "SearchRateLimitError",
-    "SearchResponseError",
-    "SearchTimeoutError",
-]
-
-BRAVE_WEB_SEARCH_URL = "https://api.search.brave.com/res/v1/web/search"
-_HTML_TAG = re.compile(r"<[^>]+>")
+TAVILY_SEARCH_URL = "https://api.tavily.com/search"
 _MAX_RETRY_DELAY_SECONDS = 30.0
 
 
-class _BraveResult(BaseModel):
-    """Minimal fields retained while normalizing a Brave result."""
+class _TavilyResult(BaseModel):
+    """Minimal fields retained while normalizing a Tavily result."""
 
     model_config = ConfigDict(extra="ignore")
 
@@ -49,43 +33,27 @@ class _BraveResult(BaseModel):
     url: str
 
 
-class _BraveWebResults(BaseModel):
-    """Minimal Brave web-results section."""
+class _TavilyResponse(BaseModel):
+    """Minimal Tavily response shape; content and scores are discarded."""
 
     model_config = ConfigDict(extra="ignore")
 
-    results: list[_BraveResult] = Field(default_factory=list)
+    results: list[_TavilyResult] = Field(default_factory=list)
 
 
-class _BraveResponse(BaseModel):
-    """Minimal Brave response shape; snippets are intentionally omitted."""
-
-    model_config = ConfigDict(extra="ignore")
-
-    web: _BraveWebResults | None = None
-
-
-def _normalize_title(title: str) -> str:
-    """Convert Brave title markup to compact plain text."""
-    return " ".join(html.unescape(_HTML_TAG.sub("", title)).split())
-
-
-def _rate_limit_delay(response: httpx.Response) -> float | None:
-    """Read Brave's first retry/reset delay without using monthly reset values."""
-    value = response.headers.get("Retry-After") or response.headers.get(
-        "X-RateLimit-Reset"
-    )
+def _retry_after_delay(response: httpx.Response) -> float | None:
+    """Read an optional Retry-After hint without failing on malformed values."""
+    value = response.headers.get("Retry-After")
     if value is None:
         return None
-    first_value = value.split(",", maxsplit=1)[0].strip()
     try:
-        return max(0.0, float(first_value))
+        return max(0.0, float(value.strip()))
     except ValueError:
         return None
 
 
-class BraveSearchProvider:
-    """Discover transient candidates through the official Brave Search API."""
+class TavilySearchProvider:
+    """Discover transient candidates through the official Tavily Search API."""
 
     def __init__(
         self,
@@ -98,10 +66,10 @@ class BraveSearchProvider:
         sleep: Callable[[float], Awaitable[None]] = asyncio.sleep,
     ) -> None:
         settings = get_settings()
-        configured_key = api_key or settings.brave_search_api_key
+        configured_key = api_key or settings.tavily_api_key
         if configured_key is None:
             raise SearchConfigurationError(
-                "BRAVE_SEARCH_API_KEY is required for Brave Search"
+                "TAVILY_API_KEY is required for Tavily Search"
             )
         key_value = (
             configured_key.get_secret_value()
@@ -109,7 +77,7 @@ class BraveSearchProvider:
             else configured_key
         )
         if not key_value.strip():
-            raise SearchConfigurationError("BRAVE_SEARCH_API_KEY must not be blank")
+            raise SearchConfigurationError("TAVILY_API_KEY must not be blank")
         self._api_key = SecretStr(key_value.strip())
         self._timeout_seconds: float = (
             timeout_seconds
@@ -148,7 +116,11 @@ class BraveSearchProvider:
         count: int = 10,
         offset: int = 0,
     ) -> list[SearchCandidate]:
-        """Return normalized candidates without retaining response snippets."""
+        """Return normalized candidates without retaining response content.
+
+        Tavily does not paginate or filter by country/language, so offsets
+        beyond the first page return no further candidates.
+        """
         parameters = SearchParameters(
             query=query,
             country=country,
@@ -156,18 +128,19 @@ class BraveSearchProvider:
             count=count,
             offset=offset,
         )
+        if parameters.offset > 0:
+            return []
         response = await self._request(parameters)
         try:
-            payload = _BraveResponse.model_validate(response.json())
+            payload = _TavilyResponse.model_validate(response.json())
         except (ValueError, ValidationError) as error:
             raise SearchResponseError(
-                "Brave Search returned an invalid response payload"
+                "Tavily Search returned an invalid response payload"
             ) from error
 
-        results = payload.web.results if payload.web is not None else []
         candidates: list[SearchCandidate] = []
-        for index, result in enumerate(results):
-            title = _normalize_title(result.title)
+        for index, result in enumerate(payload.results):
+            title = " ".join(result.title.split())
             if not title:
                 continue
             try:
@@ -176,7 +149,7 @@ class BraveSearchProvider:
                     title=title,
                     domain=normalize_domain(result.url),
                     rank=(parameters.offset * parameters.count) + index + 1,
-                    provider="brave",
+                    provider="tavily",
                 )
             except (InvalidDomainError, ValidationError):
                 continue
@@ -184,38 +157,39 @@ class BraveSearchProvider:
         return candidates
 
     async def _request(self, parameters: SearchParameters) -> httpx.Response:
-        """Execute one Brave request with bounded exponential retries."""
-        request_params: dict[str, str | int] = {
-            "q": parameters.query,
-            "country": parameters.country,
-            "search_lang": parameters.language,
-            "count": parameters.count,
-            "offset": parameters.offset,
+        """Execute one Tavily request with bounded exponential retries."""
+        request_body = {
+            "query": parameters.query,
+            "max_results": parameters.count,
+            "search_depth": "basic",
+            "include_answer": False,
+            "include_raw_content": False,
+            "include_images": False,
         }
         headers = {
             "Accept": "application/json",
-            "X-Subscription-Token": self._api_key.get_secret_value(),
+            "Authorization": f"Bearer {self._api_key.get_secret_value()}",
         }
 
         for attempt in range(self._max_retries + 1):
             try:
-                response = await self._client.get(
-                    BRAVE_WEB_SEARCH_URL,
-                    params=request_params,
+                response = await self._client.post(
+                    TAVILY_SEARCH_URL,
+                    json=request_body,
                     headers=headers,
                     timeout=self._timeout_seconds,
                 )
             except httpx.TimeoutException as error:
                 if attempt == self._max_retries:
                     raise SearchTimeoutError(
-                        "Brave Search timed out after retry attempts"
+                        "Tavily Search timed out after retry attempts"
                     ) from error
                 await self._sleep(self._backoff_delay(attempt))
                 continue
             except httpx.TransportError as error:
                 if attempt == self._max_retries:
                     raise SearchProviderUnavailableError(
-                        "Brave Search transport failed after retry attempts"
+                        "Tavily Search transport failed after retry attempts"
                     ) from error
                 await self._sleep(self._backoff_delay(attempt))
                 continue
@@ -224,30 +198,30 @@ class BraveSearchProvider:
                 return response
             if response.status_code == 401:
                 raise SearchAuthenticationError(
-                    "Brave Search rejected the configured API key"
+                    "Tavily Search rejected the configured API key"
                 )
             if response.status_code == 403:
                 raise SearchAuthorizationError(
-                    "Brave Search subscription is not authorized"
+                    "Tavily Search plan is not authorized for this endpoint"
                 )
             if response.status_code == 429 or response.status_code >= 500:
                 if attempt < self._max_retries:
                     delay = self._backoff_delay(attempt)
                     if response.status_code == 429:
-                        reset_delay = _rate_limit_delay(response)
-                        if reset_delay is not None:
-                            delay = max(delay, reset_delay)
+                        retry_delay = _retry_after_delay(response)
+                        if retry_delay is not None:
+                            delay = max(delay, retry_delay)
                     await self._sleep(min(delay, _MAX_RETRY_DELAY_SECONDS))
                     continue
                 if response.status_code == 429:
                     raise SearchRateLimitError(
-                        "Brave Search rate limit exceeded after retry attempts"
+                        "Tavily Search rate limit exceeded after retry attempts"
                     )
                 raise SearchProviderUnavailableError(
-                    "Brave Search service failed after retry attempts"
+                    "Tavily Search service failed after retry attempts"
                 )
             raise SearchProviderError(
-                f"Brave Search returned HTTP {response.status_code}"
+                f"Tavily Search returned HTTP {response.status_code}"
             )
 
         raise AssertionError("search retry loop exited unexpectedly")
@@ -264,7 +238,7 @@ class BraveSearchProvider:
         if self._owns_client:
             await self._client.aclose()
 
-    async def __aenter__(self) -> "BraveSearchProvider":
+    async def __aenter__(self) -> "TavilySearchProvider":
         """Enter an async provider context."""
         return self
 
